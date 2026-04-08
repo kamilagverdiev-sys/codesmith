@@ -1,0 +1,112 @@
+# Codesmith configuration
+# Copy this file to config.yaml and adjust. Secrets go into .env, NOT here.
+
+# ============================================================
+# LLM Layer (Phase 0)
+# ============================================================
+# Any provider supported by LiteLLM: https://docs.litellm.ai/docs/providers
+# Popular options:
+#   provider: anthropic, model: claude-opus-4-6   (best for code)
+#   provider: anthropic, model: claude-sonnet-4-6 (fast, cheap)
+#   provider: openai,    model: gpt-4o
+#   provider: ollama,    model: qwen2.5-coder:7b  (offline)
+llm:
+  provider: anthropic
+  model: claude-opus-4-6
+  # api_key and api_base are read from .env — see ANTHROPIC_API_KEY etc.
+  temperature: 0.3          # lower = more deterministic, better for code
+  max_tokens: 8000
+
+# Fallback chain — if primary fails, try these in order.
+# Leave empty to disable fallback.
+llm_fallbacks:
+  - provider: openai
+    model: gpt-4o
+  - provider: ollama
+    model: qwen2.5-coder:7b
+    api_base: http://localhost:11434
+
+# ============================================================
+# Sandbox (Phase 1) — Docker execution
+# ============================================================
+sandbox:
+  image: codesmith-sandbox:latest    # built from docker/sandbox.Dockerfile
+  timeout_seconds: 30
+  memory_mb: 512
+  cpus: 1.0
+  network: none                      # NEVER change to 'bridge' without thinking
+  pids_limit: 64
+  workspace_mount: /work             # path inside container
+
+# ============================================================
+# Loops (Phase 1, 2)
+# ============================================================
+loops:
+  self_repair:
+    enabled: true
+    max_attempts: 5
+    include_previous_errors: true     # feed stderr back to LLM on retry
+  compaction:
+    enabled: true
+    trigger_at_messages: 50
+    trigger_at_tokens: 20000
+
+# ============================================================
+# Memory (Phase 2) — MemPalace
+# ============================================================
+memory:
+  enabled: false                      # turn on in Phase 2
+  palace_path: ~/.codesmith/palace
+  mode: raw                           # raw is the only benchmarked-good mode
+                                      # NOT aaak (84.2% vs raw's 96.6%)
+                                      # NOT rooms alone
+  search_top_k: 5
+
+# ============================================================
+# Tools
+# ============================================================
+tools:
+  filesystem:
+    enabled: true
+    workspace_root: ~/.codesmith/workspaces
+  web_search:
+    enabled: false                    # Phase 2
+    provider: tavily                  # or brave
+    max_calls_per_session: 5
+  memory:
+    enabled: false                    # depends on memory.enabled
+
+# ============================================================
+# Session persistence (Phase 2)
+# ============================================================
+sessions:
+  backend: sqlite
+  path: ~/.codesmith/sessions.db
+
+# ============================================================
+# API server (Phase 3)
+# ============================================================
+api:
+  host: 127.0.0.1
+  port: 8000
+  cors_origins: []
+  auth:
+    enabled: false
+    # api_keys read from .env: CODESMITH_API_KEYS=key1,key2
+
+# ============================================================
+# Concurrency limits (Phase 3)
+# ============================================================
+limits:
+  max_concurrent_sessions: 5
+  max_concurrent_sandboxes: 3
+  session_timeout_seconds: 600
+
+# ============================================================
+# Logging
+# ============================================================
+logging:
+  level: INFO                         # DEBUG for troubleshooting
+  format: rich                        # 'rich' for dev, 'json' for production
+  log_llm_calls: true                 # log every LLM call with token count
+  log_file: ~/.codesmith/logs/agent.jsonl
