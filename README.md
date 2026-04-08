@@ -1,116 +1,164 @@
 # Codesmith
 
-Гибридный AI-агент, который пишет код, исполняет его в изолированном sandbox, чинит свои ошибки и помнит прошлый опыт.
+Гибридный AI-агент, который пишет код, исполняет его в изолированном Docker-sandbox, чинит свои ошибки и помнит прошлый опыт.
 
-> **Статус:** ранняя разработка. Phase 0 (подготовка) и ядро Phase 1 (MVP coder agent).
+> **Статус:** Phase 0 + ядро Phase 1 готовы. Web UI + CLI + SSE-стрим уже работают.
 > Полный план развития см. [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Что это
 
-- **Hybrid LLM** — Claude, GPT, Ollama через один интерфейс (LiteLLM).
-- **Docker sandbox** — безопасное исполнение произвольного Python-кода.
-- **Self-repair loop** — агент видит ошибку, правит код, повторяет.
+- **Hybrid LLM** — Claude, GPT, Ollama через один интерфейс (LiteLLM, fallback-цепочка).
+- **Docker sandbox** — безопасное исполнение Python (`network: none`, cpu/mem/pids cap).
+- **Self-repair loop** — агент видит stderr, правит код, повторяет.
+- **Web UI** — single-page чат с **live SSE-стримом** прогресса агента (шаги, tool calls, результаты).
+- **Interactive REPL** — многошаговый чат прямо в терминале.
+- **CLI** — `chat`, `solve`, `repl`, `web`, `info` через Typer.
 - **Memory** (Phase 2) — долговременная семантическая память через MemPalace.
-- **HTTP API + streaming** (Phase 3) — сервис вместо CLI.
 - **Multi-agent** (Phase 4) — Planner / Coder / Critic / Tester.
 
-## Quickstart
+## Quickstart — одна кнопка
 
-### Fast Start On Windows
+На Windows достаточно дважды кликнуть по `codesmith.bat` в корне репо. Откроется меню:
+
+```
++======================================+
+|           C O D E S M I T H          |
+|     hybrid AI coder + sandbox        |
++======================================+
+
+  [1] Web UI         - browser chat with live SSE stream
+  [2] REPL           - interactive multi-turn chat
+  [3] Solve task     - run a task with self-repair loop
+  [4] Info           - config + live health checks
+  [5] Doctor         - docker / sandbox / ollama probes
+  [6] Build sandbox  - rebuild docker sandbox image
+  [7] Install        - bootstrap venv + dependencies
+  [Q] Quit
+```
+
+`codesmith.bat` принимает и аргументы — для прямого запуска без меню:
+
+```bat
+codesmith.bat web              :: запустить Web UI и открыть браузер
+codesmith.bat repl             :: интерактивный чат в терминале
+codesmith.bat info             :: config + health checks
+codesmith.bat doctor           :: диагностика
+codesmith.bat solve "fib(20)"  :: одна задача через self-repair
+```
+
+## Quickstart — руками
+
+### 1. Требования
+
+- Windows 10/11 + PowerShell 5+ (или Linux/macOS — bat-launcher только под Win, остальное кросс-платформенно).
+- Python **3.11+**.
+- Docker Desktop с WSL2.
+- Один из LLM-источников:
+  - локально: **Ollama** + `qwen2.5-coder:7b` (~4.7 GB);
+  - или облако: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` в `.env`.
+
+### 2. Установка
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
+git clone <this-repo> codesmith
+cd codesmith
 .\scripts\bootstrap.ps1 -RunTests
 .\scripts\doctor.ps1
 .\scripts\build-sandbox.ps1
 ```
 
-If you want to prepare a local-only stack as well:
+Локальный стек целиком одной командой:
 
 ```powershell
-.\scripts\bootstrap.ps1 -InstallOllama -InstallDocker
-```
-
-After Ollama is installed, you can pull the default local coder model:
-
-```powershell
-.\scripts\bootstrap.ps1 -PullModel -Model qwen2.5-coder:7b
-```
-
-### 1. Требования
-
-- Python 3.11+
-- Docker Desktop + WSL2 (для sandbox на Windows)
-- Один из API ключей: Anthropic / OpenAI / локальная Ollama
-
-### 2. Установка
-
-```bash
-git clone <this-repo> codesmith
-cd codesmith
-
-# uv — быстрый менеджер пакетов (или используй pip/poetry)
-pip install uv
-uv venv
-source .venv/bin/activate
-
-uv pip install -e ".[dev]"
+.\scripts\bootstrap.ps1 -InstallOllama -InstallDocker -PullModel -Model qwen2.5-coder:7b
 ```
 
 ### 3. Конфигурация
 
 ```bash
-cp config.example.yaml config.yaml
-cp .env.example .env
-# открой .env и вставь свой ANTHROPIC_API_KEY (или OPENAI_API_KEY)
+cp config.example.yaml config.yaml   # primary llm + sandbox + loops
+cp .env.example .env                  # секреты, в git не уходят
 ```
 
-### 4. Собрать sandbox image
+`config.yaml` по умолчанию указывает на `ollama/qwen2.5-coder:7b`. Чтобы переключиться на Claude:
 
-```bash
-docker build -t codesmith-sandbox:latest -f docker/sandbox.Dockerfile docker/
+```yaml
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-6
 ```
 
-### 5. Smoke test
+(и положи `ANTHROPIC_API_KEY` в `.env`).
 
-```bash
-# Простой чат
-codesmith chat "напиши функцию, которая считает факториал"
+### 4. Запуск
 
-# С self-repair loop — агент сам запустит код и исправит, если что
-codesmith solve "напиши fibonacci(n) и проверь на n=10"
-```
+| Сценарий | Команда |
+|---|---|
+| Web UI с live SSE-стримом | `codesmith web` или `codesmith.bat web` |
+| Интерактивный чат в терминале | `codesmith repl` |
+| Один вопрос — один ответ | `codesmith chat "напиши факториал"` |
+| Задача с self-repair loop | `codesmith solve "fib(20) и проверь"` |
+| Конфиг + live health | `codesmith info` |
+
+## Web UI
+
+`codesmith web` стартует FastAPI на `http://127.0.0.1:8000` и автоматически открывает браузер. UI — single-file, тёмная тема, vanilla JS, никакого build step.
+
+Что показывает:
+- **header** — текущий LLM, sandbox-лимиты, версия, индикатор живости API;
+- **chat** — пузыри user/codesmith, под каждым ответом — раскрывающиеся step-карточки с tool calls и их сырыми результатами;
+- **footer** — textarea, `Ctrl+Enter` для отправки, `Esc` отменяет inflight-запрос;
+- **new session** — сбросить контекст и workspace.
+
+Под капотом:
+- `POST /api/sessions` — создать сессию (изолированный workspace на диске);
+- `POST /api/sessions/{sid}/chat` — шлёт пользовательское сообщение, возвращает SSE-стрим:
+  - `event: start` — агент принял запрос;
+  - `event: step` — каждая итерация LLM с tool_calls + результатами;
+  - `event: final` — финальный ответ + статистика;
+  - `event: error` — фатальная ошибка, стрим закрывается;
+- `GET /api/info` — конфиг без секретов, для header'а UI;
+- `GET /` — статический UI.
 
 ## Структура проекта
 
 ```
 codesmith/
+├── codesmith.bat               ← one-click launcher (root)
 ├── docs/
-│   ├── ROADMAP.md          ← главный документ, читать первым
-│   └── ARCHITECTURE.md     ← технические детали
+│   ├── ROADMAP.md
+│   └── ARCHITECTURE.md
 ├── src/codesmith/
-│   ├── config.py           # загрузка YAML + .env
-│   ├── llm.py              # обёртка над LiteLLM
-│   ├── session.py          # session state
-│   ├── agent.py            # основной agentic loop
-│   ├── cli.py              # Typer CLI
+│   ├── config.py               # YAML + .env, pydantic-валидация
+│   ├── llm.py                  # LiteLLM + fallback router
+│   ├── session.py              # session state + workspace
+│   ├── agent.py                # agentic loop + on_step callback
+│   ├── cli.py                  # Typer: chat / solve / repl / web / info
 │   ├── tools/
-│   │   ├── base.py         # интерфейс Tool
-│   │   ├── registry.py     # регистр инструментов
-│   │   ├── sandbox.py      # Docker execution (критический файл)
-│   │   └── filesystem.py   # read/write с изоляцией workspace
+│   │   ├── base.py
+│   │   ├── registry.py
+│   │   ├── sandbox.py          # Docker execution (критический файл)
+│   │   └── filesystem.py
 │   ├── loops/
-│   │   └── self_repair.py  # write → run → error → fix
+│   │   └── self_repair.py
 │   └── api/
-│       └── main.py         # FastAPI (Phase 3)
+│       ├── main.py             # FastAPI: sessions + SSE chat + static
+│       └── static/
+│           └── index.html      # single-file Web UI
 ├── docker/
-│   └── sandbox.Dockerfile  # минимальный образ для исполнения кода
+│   └── sandbox.Dockerfile
 ├── scripts/
-│   ├── bootstrap.ps1       # разворачивает локальное окружение
-│   ├── build-sandbox.ps1   # собирает docker image для sandbox
-│   ├── doctor.ps1          # проверяет готовность машины
-│   └── run-api.ps1         # запускает FastAPI сервер
+│   ├── codesmith.ps1           # PS-обвязка для codesmith.bat
+│   ├── bootstrap.ps1
+│   ├── build-sandbox.ps1
+│   ├── doctor.ps1
+│   └── run-api.ps1
 ├── tests/
+│   ├── test_config.py
+│   ├── test_filesystem.py
+│   ├── test_registry.py
+│   ├── test_sandbox_integration.py
+│   └── test_api.py             # FastAPI + SSE round-trip
 ├── config.example.yaml
 ├── .env.example
 └── pyproject.toml
@@ -118,7 +166,12 @@ codesmith/
 
 ## Безопасность
 
-Sandbox построен по принципу «считаем, что LLM попытается сломать систему». См. раздел 1.2 в `docs/ROADMAP.md` — все 10 правил обязательны. Если ты меняешь `sandbox.py`, прочитай этот раздел **до** того, как коммитить.
+Sandbox построен по принципу «считаем, что LLM попытается сломать систему». См. раздел 1.2 в `docs/ROADMAP.md` — все 10 правил обязательны. Если ты меняешь `tools/sandbox.py` или `docker/sandbox.Dockerfile`, прочитай этот раздел **до** коммита.
+
+Ключевые дефолты, которые нельзя менять без обсуждения:
+- `sandbox.network: none` — sandbox без сети;
+- `sandbox.pids_limit: 64` — fork-bomb защита;
+- `sandbox.memory_mb: 512`, `sandbox.cpus: 1.0`, `sandbox.timeout_seconds: 30`.
 
 ## Лицензия
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,8 @@ from codesmith.tools.registry import ToolRegistry
 if TYPE_CHECKING:
     from codesmith.config import Config
     from codesmith.session import Session
+
+StepCallback = Callable[["AgentStep", int], Awaitable[None]]
 
 log = logging.getLogger(__name__)
 
@@ -118,8 +121,19 @@ class Agent:
 
         return AgentStep(response=response, tool_results=tool_results)
 
-    async def run(self, session: Session) -> AgentRun:
-        """Loop step() until the LLM stops calling tools or we hit max_iterations."""
+    async def run(
+        self,
+        session: Session,
+        on_step: StepCallback | None = None,
+    ) -> AgentRun:
+        """Loop step() until the LLM stops calling tools or we hit max_iterations.
+
+        Args:
+            session: conversation state, mutated in place.
+            on_step: optional async callback invoked after each AgentStep with
+                (step, iteration_index). Used by the API server to stream
+                progress events to the UI without duplicating loop logic.
+        """
         steps: list[AgentStep] = []
         total_tokens = 0
         hit_limit = False
@@ -128,6 +142,9 @@ class Agent:
             step = await self.step(session)
             steps.append(step)
             total_tokens += step.response.usage.get("total_tokens", 0)
+
+            if on_step is not None:
+                await on_step(step, i)
 
             if not step.response.tool_calls:
                 # LLM produced a plain answer — we're done.
