@@ -11,6 +11,7 @@
         codesmith.ps1 web      - start Web UI
         codesmith.ps1 repl     - interactive chat
         codesmith.ps1 info     - config + health
+        codesmith.ps1 models   - list model profiles
         codesmith.ps1 doctor   - sandbox / docker / ollama check
         codesmith.ps1 build    - rebuild sandbox image
         codesmith.ps1 install  - bootstrap venv + deps
@@ -27,7 +28,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('menu','web','repl','info','doctor','build','install','chat','solve','help')]
+    [ValidateSet('menu','web','repl','info','models','doctor','build','install','chat','solve','help')]
     [string] $Action = 'menu',
 
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -106,12 +107,15 @@ function Show-Menu {
     Write-Host "Info         " -NoNewline
     Write-Host "  - config + live health checks" -ForegroundColor DarkGray
     Write-Host "    [5] " -ForegroundColor Yellow -NoNewline
+    Write-Host "Models       " -NoNewline
+    Write-Host "  - list model profiles and Ollama tags" -ForegroundColor DarkGray
+    Write-Host "    [6] " -ForegroundColor Yellow -NoNewline
     Write-Host "Doctor       " -NoNewline
     Write-Host "  - docker / sandbox / ollama probes" -ForegroundColor DarkGray
-    Write-Host "    [6] " -ForegroundColor Yellow -NoNewline
+    Write-Host "    [7] " -ForegroundColor Yellow -NoNewline
     Write-Host "Build sandbox" -NoNewline
     Write-Host "  - rebuild docker sandbox image" -ForegroundColor DarkGray
-    Write-Host "    [7] " -ForegroundColor Yellow -NoNewline
+    Write-Host "    [8] " -ForegroundColor Yellow -NoNewline
     Write-Host "Install      " -NoNewline
     Write-Host "  - bootstrap venv + dependencies" -ForegroundColor DarkGray
     Write-Host "    [Q] " -ForegroundColor DarkYellow -NoNewline
@@ -128,9 +132,10 @@ function Resolve-MenuChoice {
         '2' { return 'repl' }
         '3' { return 'solve' }
         '4' { return 'info' }
-        '5' { return 'doctor' }
-        '6' { return 'build' }
-        '7' { return 'install' }
+        '5' { return 'models' }
+        '6' { return 'doctor' }
+        '7' { return 'build' }
+        '8' { return 'install' }
         'q' { return 'quit' }
         default { return '' }
     }
@@ -148,6 +153,7 @@ function Run-Action {
         'web'  { Invoke-Codesmith (@('web') + $Rest); return }
         'repl' { Invoke-Codesmith @('repl'); return }
         'info' { Invoke-Codesmith @('info'); return }
+        'models' { Invoke-Codesmith @('models'); return }
         'chat' {
             if (-not $Rest -or $Rest.Length -eq 0) {
                 $msg = Read-Host "  message"
@@ -188,7 +194,7 @@ function Run-Action {
         }
         'help' {
             Write-Host ""
-            Write-Host "  usage: codesmith.bat [web|repl|info|doctor|build|install|chat|solve]" -ForegroundColor White
+            Write-Host "  usage: codesmith.bat [web|repl|info|models|doctor|build|install|chat|solve]" -ForegroundColor White
             Write-Host ""
             Write-Host "  no argument: opens an interactive menu." -ForegroundColor DarkGray
             return

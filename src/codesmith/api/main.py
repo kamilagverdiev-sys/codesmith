@@ -26,20 +26,29 @@ import contextlib
 import json
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from codesmith import __version__
 from codesmith.agent import Agent, AgentStep
 from codesmith.config import Config, load_config
-from codesmith.llm import LLMRouter
+from codesmith.llm import LLMError, LLMRouter
+from codesmith.model_selection import (
+    UnknownModelProfileError,
+    default_model_profile_key,
+    list_installed_ollama_models,
+    list_model_profiles,
+    resolve_model_profile,
+)
+from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
 from codesmith.tools.filesystem import default_filesystem_tools
 from codesmith.tools.registry import ToolRegistry
@@ -68,7 +77,6 @@ class AppState:
 
     def __init__(self, config: Config) -> None:
         self.config = config
-        self.router = LLMRouter(primary=config.llm, fallbacks=config.llm_fallbacks)
 
         self.registry = ToolRegistry()
         self.registry.register(SandboxTool(config.sandbox))
@@ -78,13 +86,22 @@ class AppState:
 
         self.sessions: dict[str, Session] = {}
         self._lock = asyncio.Lock()
+        self.run_logger = RunLogger()
 
-    def make_agent(self) -> Agent:
-        return Agent(config=self.config, llm=self.router, registry=self.registry)
+    def make_agent(self, model_profile: str | None = None) -> Agent:
+        resolved = resolve_model_profile(
+            self.config,
+            model_profile,
+            list_installed_ollama_models(self.config),
+        )
+        router = LLMRouter(primary=resolved.primary, fallbacks=resolved.fallbacks)
+        return Agent(config=self.config, llm=router, registry=self.registry)
 
-    async def create_session(self) -> Session:
+    async def create_session(self, model_profile: str | None = None) -> Session:
         async with self._lock:
             session = Session.create(workspace_root=self.config.tools.filesystem.workspace_root)
+            if model_profile:
+                session.metadata["model_profile"] = model_profile
             self.sessions[session.session_id] = session
             return session
 
@@ -112,10 +129,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     cfg_path = os.environ.get("CODESMITH_CONFIG", "config.yaml")
     config = load_config(Path(cfg_path))
     app.state.codesmith = AppState(config)
+    resolved = resolve_model_profile(
+        config,
+        default_model_profile_key(config),
+        list_installed_ollama_models(config),
+    )
     log.info(
-        "codesmith api ready — primary=%s/%s sessions=in-memory",
-        config.llm.provider,
-        config.llm.model,
+        "codesmith api ready - default_profile=%s primary=%s/%s sessions=in-memory",
+        resolved.key,
+        resolved.primary.provider,
+        resolved.primary.model,
     )
     try:
         yield
@@ -148,14 +171,22 @@ def _state(request: Request) -> AppState:
 # ============================================================
 
 
+class CreateSessionRequest(BaseModel):
+    model_profile: str | None = None
+
+
 class CreateSessionResponse(BaseModel):
     session_id: str
     workspace: str
+    model_profile: str
+    resolved_provider: str
+    resolved_model: str
 
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     max_iterations: int | None = Field(default=None, ge=1, le=50)
+    model_profile: str | None = None
 
 
 class SessionSummary(BaseModel):
@@ -166,6 +197,7 @@ class SessionSummary(BaseModel):
 
 class InfoResponse(BaseModel):
     version: str
+    default_model_profile: str
     primary_provider: str
     primary_model: str
     has_api_key: bool
@@ -176,6 +208,25 @@ class InfoResponse(BaseModel):
     sandbox_timeout_s: int
     memory_enabled: bool
     web_search_enabled: bool
+
+
+class ModelProfileResponse(BaseModel):
+    key: str
+    label: str
+    description: str
+    primary_provider: str
+    primary_model: str
+    fallbacks: list[str]
+    available: bool
+    availability: str
+    source: str
+    recommended: bool = False
+
+
+class ModelsResponse(BaseModel):
+    default_model_profile: str
+    profiles: list[ModelProfileResponse]
+    installed_ollama_models: list[str]
 
 
 # ============================================================
@@ -190,13 +241,20 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/info", response_model=InfoResponse)
 async def info(request: Request) -> InfoResponse:
-    cfg = _state(request).config
+    state = _state(request)
+    cfg = state.config
+    resolved = resolve_model_profile(
+        cfg,
+        default_model_profile_key(cfg),
+        list_installed_ollama_models(cfg),
+    )
     return InfoResponse(
         version=__version__,
-        primary_provider=cfg.llm.provider,
-        primary_model=cfg.llm.model,
-        has_api_key=bool(cfg.llm.api_key),
-        fallbacks=[f"{f.provider}/{f.model}" for f in cfg.llm_fallbacks],
+        default_model_profile=resolved.key,
+        primary_provider=resolved.primary.provider,
+        primary_model=resolved.primary.model,
+        has_api_key=bool(resolved.primary.api_key),
+        fallbacks=[f"{f.provider}/{f.model}" for f in resolved.fallbacks],
         sandbox_image=cfg.sandbox.image,
         sandbox_memory_mb=cfg.sandbox.memory_mb,
         sandbox_cpus=cfg.sandbox.cpus,
@@ -206,13 +264,43 @@ async def info(request: Request) -> InfoResponse:
     )
 
 
-@app.post("/api/sessions", response_model=CreateSessionResponse)
-async def create_session(request: Request) -> CreateSessionResponse:
+@app.get("/api/models", response_model=ModelsResponse)
+async def models(request: Request) -> ModelsResponse:
     state = _state(request)
-    session = await state.create_session()
+    installed = list_installed_ollama_models(state.config)
+    profiles = [
+        ModelProfileResponse(**summary.__dict__)
+        for summary in list_model_profiles(state.config, installed)
+    ]
+    return ModelsResponse(
+        default_model_profile=default_model_profile_key(state.config),
+        profiles=profiles,
+        installed_ollama_models=installed,
+    )
+
+
+@app.post("/api/sessions", response_model=CreateSessionResponse)
+async def create_session(
+    request: Request,
+    payload: Annotated[CreateSessionRequest | None, Body()] = None,
+) -> CreateSessionResponse:
+    state = _state(request)
+    selection = payload.model_profile if payload else None
+    try:
+        resolved = resolve_model_profile(
+            state.config,
+            selection,
+            list_installed_ollama_models(state.config),
+        )
+    except UnknownModelProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    session = await state.create_session(resolved.key)
     return CreateSessionResponse(
         session_id=session.session_id,
         workspace=str(session.workspace_dir),
+        model_profile=resolved.key,
+        resolved_provider=resolved.primary.provider,
+        resolved_model=resolved.primary.model,
     )
 
 
@@ -257,15 +345,29 @@ async def chat(
     """
     state = _state(request)
     session = state.get_session(session_id)
+    selected_profile = payload.model_profile or session.metadata.get("model_profile")
+    try:
+        resolved_profile = resolve_model_profile(
+            state.config,
+            selected_profile,
+            list_installed_ollama_models(state.config),
+        )
+    except UnknownModelProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    session.metadata["model_profile"] = resolved_profile.key
     session.add_user(payload.message)
 
-    agent = state.make_agent()
+    agent = state.make_agent(resolved_profile.key)
     if payload.max_iterations:
         agent.max_iterations = payload.max_iterations
 
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
     async def on_step(step: AgentStep, iteration: int) -> None:
+        if not step.response.tool_calls and not step.tool_results:
+            # Plain assistant text is surfaced by the terminal `final` event;
+            # skip the duplicate debug step in the Web UI.
+            return
         tool_calls_summary = []
         for tc in step.response.tool_calls or []:
             try:
@@ -292,9 +394,20 @@ async def chat(
         )
 
     async def runner() -> None:
+        started_at = time.monotonic()
+        log_error: str | None = None
+        run = None
         try:
             await queue.put(
-                {"event": "start", "data": {"message": payload.message}}
+                {
+                    "event": "start",
+                    "data": {
+                        "message": payload.message,
+                        "model_profile": resolved_profile.key,
+                        "provider": resolved_profile.primary.provider,
+                        "model": resolved_profile.primary.model,
+                    },
+                }
             )
             run = await agent.run(session, on_step=on_step)
             await queue.put(
@@ -305,13 +418,57 @@ async def chat(
                         "steps": len(run.steps),
                         "tokens": run.total_tokens,
                         "hit_limit": run.hit_limit,
+                        "forced_final": run.forced_final,
+                    },
+                }
+            )
+        except LLMError as e:
+            # All providers failed. Surface a friendly hint instead of the
+            # full multi-provider traceback.
+            log.warning("LLM router exhausted: %s", e)
+            log_error = f"LLMError: {e}"
+            await queue.put(
+                {
+                    "event": "error",
+                    "data": {
+                        "error": (
+                            "LLM backend unavailable.\n\n"
+                            "Run `codesmith info` for live health checks, or "
+                            "`codesmith pull-model` if Ollama is missing the "
+                            "configured model."
+                        ),
+                        "details": str(e),
                     },
                 }
             )
         except Exception as e:  # noqa: BLE001
             log.exception("agent run failed")
-            await queue.put({"event": "error", "data": {"error": f"{type(e).__name__}: {e}"}})
+            log_error = f"{type(e).__name__}: {e}"
+            await queue.put(
+                {
+                    "event": "error",
+                    "data": {"error": log_error},
+                }
+            )
         finally:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            with contextlib.suppress(Exception):
+                state.run_logger.record(
+                    build_run_record(
+                        session_id=session.session_id,
+                        profile_key=resolved_profile.key,
+                        provider=resolved_profile.primary.provider,
+                        model=resolved_profile.primary.model,
+                        user_message=payload.message,
+                        steps=len(run.steps) if run else 0,
+                        tokens=run.total_tokens if run else 0,
+                        hit_limit=bool(run.hit_limit) if run else False,
+                        duration_ms=duration_ms,
+                        forced_final=bool(run.forced_final) if run else False,
+                        error=log_error,
+                        extra={"caller": "web"},
+                    )
+                )
             await queue.put(None)  # sentinel
 
     task = asyncio.create_task(runner())
@@ -355,9 +512,11 @@ async def index() -> FileResponse:
 
 
 @app.get("/favicon.ico")
-async def favicon() -> JSONResponse:
+async def favicon() -> Response:
     # Avoid 404 noise in dev console; we don't ship a favicon yet.
-    return JSONResponse({}, status_code=204)
+    # 204 No Content REQUIRES an empty body, otherwise uvicorn raises
+    # "Response content longer than Content-Length".
+    return Response(status_code=204)
 
 
 # ============================================================

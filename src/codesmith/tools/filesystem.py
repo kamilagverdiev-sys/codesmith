@@ -195,6 +195,124 @@ class ListDirTool(BaseTool):
         )
 
 
+# ============================================================
+# edit_file
+# ============================================================
+
+
+class EditFileTool(BaseTool):
+    """Literal string replacement in an existing workspace file.
+
+    Safer and far cheaper than repeated full write_file for models that tend
+    to re-serialize the whole file on every tiny change. Follows Claude's
+    Edit semantics:
+
+    * find must occur exactly once in the file (otherwise the model has to
+      disambiguate by passing more surrounding context);
+    * find and replace must differ;
+    * the file must already exist (use write_file to create new files).
+    """
+
+    name = "edit_file"
+    description = (
+        "Edit an existing file by replacing one exact occurrence of `find` with "
+        "`replace`. Use this instead of write_file for small, targeted changes. "
+        "`find` must appear exactly once — include surrounding context if needed."
+    )
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path inside workspace"},
+            "find": {
+                "type": "string",
+                "description": (
+                    "Exact text to replace. Must occur exactly once in the file."
+                ),
+            },
+            "replace": {
+                "type": "string",
+                "description": "Replacement text. Must differ from `find`.",
+            },
+        },
+        "required": ["path", "find", "replace"],
+    }
+
+    async def execute(self, session: Session, **kwargs: Any) -> ToolResult:
+        path_arg = kwargs.get("path", "")
+        find = kwargs.get("find", "")
+        replace = kwargs.get("replace", "")
+
+        if not isinstance(find, str) or not find:
+            return ToolResult(ok=False, content="", error="`find` must be a non-empty string")
+        if not isinstance(replace, str):
+            return ToolResult(ok=False, content="", error="`replace` must be a string")
+        if find == replace:
+            return ToolResult(
+                ok=False, content="", error="`find` and `replace` must differ"
+            )
+
+        try:
+            p = _resolve_safe(session.workspace_dir, path_arg)
+        except PathEscapeError as e:
+            return ToolResult(ok=False, content="", error=str(e))
+
+        if not p.exists():
+            return ToolResult(
+                ok=False,
+                content="",
+                error=f"not found: {path_arg} (use write_file to create new files)",
+            )
+        if not p.is_file():
+            return ToolResult(ok=False, content="", error=f"not a file: {path_arg}")
+
+        try:
+            original = p.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:  # noqa: BLE001
+            return ToolResult(ok=False, content="", error=f"read failed: {e}")
+
+        occurrences = original.count(find)
+        if occurrences == 0:
+            return ToolResult(
+                ok=False,
+                content="",
+                error="find string not present in file — pass a longer, unique snippet",
+            )
+        if occurrences > 1:
+            return ToolResult(
+                ok=False,
+                content="",
+                error=(
+                    f"find string matches {occurrences} places — include more "
+                    "surrounding context so it matches exactly once"
+                ),
+            )
+
+        updated = original.replace(find, replace, 1)
+
+        if len(updated.encode("utf-8")) > MAX_WRITE_BYTES:
+            return ToolResult(
+                ok=False, content="", error=f"result too large: > {MAX_WRITE_BYTES} bytes"
+            )
+
+        try:
+            p.write_text(updated, encoding="utf-8")
+        except Exception as e:  # noqa: BLE001
+            return ToolResult(ok=False, content="", error=f"write failed: {e}")
+
+        rel = p.relative_to(session.workspace_dir)
+        delta = len(updated) - len(original)
+        sign = "+" if delta >= 0 else ""
+        return ToolResult(
+            ok=True,
+            content=f"edited {rel} ({sign}{delta} chars)",
+            metadata={
+                "path": str(rel),
+                "delta_chars": delta,
+                "occurrences_matched": 1,
+            },
+        )
+
+
 def default_filesystem_tools() -> list[BaseTool]:
     """Convenience bundle — returns one instance of each FS tool."""
-    return [ReadFileTool(), WriteFileTool(), ListDirTool()]
+    return [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]

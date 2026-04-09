@@ -122,12 +122,23 @@ def test_info_returns_config_summary(client: TestClient) -> None:
     r = client.get("/api/info")
     assert r.status_code == 200
     body = r.json()
+    assert body["default_model_profile"] == "config-default"
     assert body["primary_provider"] == "ollama"
     assert body["primary_model"] == "qwen2.5-coder:7b"
     assert body["fallbacks"] == ["anthropic/claude-sonnet-4-6"]
     assert body["sandbox_image"] == "codesmith-sandbox:test"
     assert body["memory_enabled"] is False
     assert body["web_search_enabled"] is False
+
+
+def test_models_endpoint_returns_profiles(client: TestClient) -> None:
+    r = client.get("/api/models")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["default_model_profile"] == "config-default"
+    profile_keys = {item["key"] for item in body["profiles"]}
+    assert "config-default" in profile_keys
+    assert "local-auto" in profile_keys
 
 
 def test_index_serves_static_ui(client: TestClient) -> None:
@@ -147,6 +158,7 @@ def test_create_and_list_and_delete_session(client: TestClient) -> None:
     r = client.post("/api/sessions")
     assert r.status_code == 200
     sid = r.json()["session_id"]
+    assert r.json()["model_profile"] == "config-default"
     assert sid
 
     # List has it
@@ -279,7 +291,7 @@ def test_chat_streams_step_and_final_events(
     names = [name for name, _ in events if name != "ping"]
 
     assert "start" in names
-    assert names.count("step") == 2
+    assert names.count("step") == 1
     assert "final" in names
 
     final = next(d for n, d in events if n == "final")

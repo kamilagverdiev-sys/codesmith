@@ -11,6 +11,7 @@ REM    codesmith.bat              -> interactive menu (stays open)
 REM    codesmith.bat web          -> start Web UI
 REM    codesmith.bat repl         -> interactive chat in terminal
 REM    codesmith.bat info         -> config + health checks
+REM    codesmith.bat models       -> list model profiles
 REM    codesmith.bat doctor       -> sandbox / docker / ollama probes
 REM    codesmith.bat build        -> rebuild docker sandbox image
 REM    codesmith.bat install      -> bootstrap venv + deps

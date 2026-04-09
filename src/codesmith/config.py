@@ -109,6 +109,7 @@ class LoggingConfig(BaseModel):
 class Config(BaseModel):
     llm: LLMConfig
     llm_fallbacks: list[LLMConfig] = Field(default_factory=list)
+    default_model_profile: str = "config-default"
     sandbox: SandboxConfig = SandboxConfig()
     loops: LoopsConfig = LoopsConfig()
     memory: MemoryConfig = MemoryConfig()
@@ -178,6 +179,23 @@ def _fill_api_keys_from_env(llm: LLMConfig) -> LLMConfig:
     return llm
 
 
+def _expand_optional_path(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    return path.expanduser()
+
+
+def _normalize_paths(config: Config) -> Config:
+    """Expand `~` in path fields loaded from YAML into host-specific paths."""
+    config.memory.palace_path = config.memory.palace_path.expanduser()
+    config.tools.filesystem.workspace_root = (
+        config.tools.filesystem.workspace_root.expanduser()
+    )
+    config.sessions.path = config.sessions.path.expanduser()
+    config.logging.log_file = _expand_optional_path(config.logging.log_file)
+    return config
+
+
 def load_config(path: str | Path = "config.yaml") -> Config:
     """Load config from YAML + .env.
 
@@ -204,6 +222,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
 
     # 3. Validate via Pydantic
     config = Config.model_validate(raw)
+    config = _normalize_paths(config)
 
     # 4. Overlay API keys from environment
     config.llm = _fill_api_keys_from_env(config.llm)

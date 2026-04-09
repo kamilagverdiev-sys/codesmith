@@ -13,11 +13,13 @@ from pathlib import Path
 import pytest
 
 from codesmith.tools.filesystem import (
+    EditFileTool,
     ListDirTool,
     PathEscapeError,
     ReadFileTool,
     WriteFileTool,
     _resolve_safe,
+    default_filesystem_tools,
 )
 
 
@@ -156,3 +158,97 @@ class TestListDir:
         tool = ListDirTool()
         result = await tool.execute(session, path="nowhere")
         assert not result.ok
+
+
+# ============================================================
+# EditFileTool
+# ============================================================
+
+
+class TestEditFile:
+    async def test_edit_replaces_unique_snippet(
+        self, session: _FakeSession, workspace: Path
+    ) -> None:
+        target = workspace / "main.py"
+        target.write_text("def greet():\n    return 'hi'\n", encoding="utf-8")
+        tool = EditFileTool()
+        result = await tool.execute(
+            session,
+            path="main.py",
+            find="return 'hi'",
+            replace="return 'hello'",
+        )
+        assert result.ok
+        assert target.read_text(encoding="utf-8") == "def greet():\n    return 'hello'\n"
+        assert result.metadata["occurrences_matched"] == 1
+
+    async def test_edit_rejects_multiple_matches(
+        self, session: _FakeSession, workspace: Path
+    ) -> None:
+        (workspace / "dup.py").write_text("x = 1\nx = 1\n", encoding="utf-8")
+        tool = EditFileTool()
+        result = await tool.execute(
+            session,
+            path="dup.py",
+            find="x = 1",
+            replace="x = 2",
+        )
+        assert not result.ok
+        assert "2 places" in (result.error or "")
+
+    async def test_edit_rejects_missing_snippet(
+        self, session: _FakeSession
+    ) -> None:
+        tool = EditFileTool()
+        result = await tool.execute(
+            session,
+            path="hello.txt",
+            find="nope",
+            replace="yup",
+        )
+        assert not result.ok
+        assert "not present" in (result.error or "")
+
+    async def test_edit_rejects_noop(
+        self, session: _FakeSession
+    ) -> None:
+        tool = EditFileTool()
+        result = await tool.execute(
+            session,
+            path="hello.txt",
+            find="hi",
+            replace="hi",
+        )
+        assert not result.ok
+        assert "differ" in (result.error or "")
+
+    async def test_edit_rejects_missing_file(
+        self, session: _FakeSession
+    ) -> None:
+        tool = EditFileTool()
+        result = await tool.execute(
+            session,
+            path="nope.py",
+            find="x",
+            replace="y",
+        )
+        assert not result.ok
+        assert "not found" in (result.error or "")
+
+    async def test_edit_rejects_path_escape(
+        self, session: _FakeSession
+    ) -> None:
+        tool = EditFileTool()
+        result = await tool.execute(
+            session,
+            path="../../../etc/passwd",
+            find="root",
+            replace="pwn",
+        )
+        assert not result.ok
+        assert "escape" in (result.error or "")
+
+
+def test_default_filesystem_tools_includes_edit_file() -> None:
+    names = {t.name for t in default_filesystem_tools()}
+    assert {"read_file", "write_file", "edit_file", "list_directory"} <= names
