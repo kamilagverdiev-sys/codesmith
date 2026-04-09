@@ -50,6 +50,10 @@ from codesmith.model_selection import (
 )
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
+from codesmith.session_store import (
+    InMemorySessionStore,
+    SQLiteSessionStore,
+)
 from codesmith.tools.filesystem import default_filesystem_tools
 from codesmith.tools.registry import ToolRegistry
 from codesmith.tools.sandbox import SandboxTool
@@ -67,12 +71,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 class AppState:
     """Process-wide state for the API server.
 
-    Holds the loaded config, the LLM router, a tool registry, and an
-    in-memory dict of active sessions. The sandbox image and Docker
-    client are reused — building per-request would be wasteful.
-
-    For Phase 3 multi-user this becomes per-tenant; for the local
-    single-user UI it stays a flat dict.
+    Holds the loaded config, the tool registry, the pluggable session
+    store (SQLite or in-memory per config.sessions.backend), the run
+    logger, and a mapping of inflight agent tasks so the abort endpoint
+    can actually cancel a running chat.
     """
 
     def __init__(self, config: Config) -> None:
@@ -84,9 +86,23 @@ class AppState:
             for t in default_filesystem_tools():
                 self.registry.register(t)
 
-        self.sessions: dict[str, Session] = {}
+        workspace_root = config.tools.filesystem.workspace_root
+        if config.sessions.backend == "sqlite":
+            self.session_store: InMemorySessionStore | SQLiteSessionStore = (
+                SQLiteSessionStore(
+                    db_path=config.sessions.path,
+                    workspace_root=workspace_root,
+                )
+            )
+        else:
+            self.session_store = InMemorySessionStore(workspace_root=workspace_root)
+
         self._lock = asyncio.Lock()
         self.run_logger = RunLogger()
+        # session_id -> asyncio.Task currently running agent.run() for that
+        # session. Populated on chat start, cleared on chat finish/error.
+        # Abort endpoint calls .cancel() on the task.
+        self._inflight: dict[str, asyncio.Task[Any]] = {}
 
     def make_agent(self, model_profile: str | None = None) -> Agent:
         resolved = resolve_model_profile(
@@ -99,28 +115,44 @@ class AppState:
 
     async def create_session(self, model_profile: str | None = None) -> Session:
         async with self._lock:
-            session = Session.create(workspace_root=self.config.tools.filesystem.workspace_root)
-            if model_profile:
-                session.metadata["model_profile"] = model_profile
-            self.sessions[session.session_id] = session
-            return session
+            return self.session_store.create(model_profile=model_profile)
+
+    def save_session(self, session: Session) -> None:
+        try:
+            self.session_store.save(session)
+        except Exception as e:  # noqa: BLE001
+            log.warning("session persist failed for %s: %s", session.session_id, e)
 
     async def drop_session(self, session_id: str) -> bool:
         async with self._lock:
-            session = self.sessions.pop(session_id, None)
-            if session is None:
-                return False
-            try:
-                session.destroy()
-            except Exception as e:  # noqa: BLE001
-                log.warning("session.destroy failed for %s: %s", session_id, e)
-            return True
+            # Cancel any in-flight chat for this session before dropping
+            # its state — otherwise the cancelled task would try to save
+            # back into a non-existent row.
+            task = self._inflight.pop(session_id, None)
+            if task is not None and not task.done():
+                task.cancel()
+            return self.session_store.delete(session_id)
 
     def get_session(self, session_id: str) -> Session:
-        try:
-            return self.sessions[session_id]
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail="session not found") from e
+        session = self.session_store.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        return session
+
+    def register_inflight(self, session_id: str, task: asyncio.Task[Any]) -> None:
+        self._inflight[session_id] = task
+
+    def clear_inflight(self, session_id: str, task: asyncio.Task[Any]) -> None:
+        current = self._inflight.get(session_id)
+        if current is task:
+            self._inflight.pop(session_id, None)
+
+    def abort_inflight(self, session_id: str) -> bool:
+        task = self._inflight.get(session_id)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
 
 @asynccontextmanager
@@ -146,9 +178,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Best-effort cleanup; we don't want shutdown to fail noisily.
         state: AppState | None = getattr(app.state, "codesmith", None)
         if state is not None:
-            for sid in list(state.sessions.keys()):
-                with contextlib.suppress(Exception):
-                    await state.drop_session(sid)
+            for sid, task in list(state._inflight.items()):
+                if not task.done():
+                    task.cancel()
+                state._inflight.pop(sid, None)
 
 
 app = FastAPI(
@@ -193,6 +226,23 @@ class SessionSummary(BaseModel):
     session_id: str
     messages: int
     workspace: str
+    title: str = ""
+    model_profile: str | None = None
+    updated_at: str = ""
+
+
+class SessionMessage(BaseModel):
+    role: str
+    content: str
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+
+
+class SessionHistoryResponse(BaseModel):
+    session_id: str
+    workspace: str
+    model_profile: str | None
+    messages: list[SessionMessage]
 
 
 class InfoResponse(BaseModel):
@@ -361,16 +411,70 @@ async def create_session(
 
 
 @app.get("/api/sessions", response_model=list[SessionSummary])
-async def list_sessions(request: Request) -> list[SessionSummary]:
+async def list_sessions(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+) -> list[SessionSummary]:
     state = _state(request)
+    rows = state.session_store.list(limit=limit)
     return [
         SessionSummary(
-            session_id=s.session_id,
-            messages=len(s.messages),
-            workspace=str(s.workspace_dir),
+            session_id=row.session_id,
+            messages=row.message_count,
+            workspace=row.workspace,
+            title=row.title,
+            model_profile=row.model_profile,
+            updated_at=row.updated_at,
         )
-        for s in state.sessions.values()
+        for row in rows
     ]
+
+
+@app.get("/api/sessions/{session_id}/messages", response_model=SessionHistoryResponse)
+async def get_session_messages(
+    session_id: str, request: Request
+) -> SessionHistoryResponse:
+    """Return the full stored message history for a session.
+
+    Used by the Web UI on page load to restore the chat after a
+    refresh, and by anything that needs to render a past transcript.
+    """
+    state = _state(request)
+    session = state.get_session(session_id)
+    messages: list[SessionMessage] = []
+    for raw in session.messages:
+        if not isinstance(raw, dict):
+            continue
+        role = str(raw.get("role") or "")
+        if role == "system":
+            # Hide the framework system prompt from the UI.
+            continue
+        content_field = raw.get("content")
+        content = content_field if isinstance(content_field, str) else ""
+        tool_calls_field = raw.get("tool_calls")
+        tool_calls_value = (
+            tool_calls_field
+            if isinstance(tool_calls_field, list) and tool_calls_field
+            else None
+        )
+        tool_call_id_field = raw.get("tool_call_id")
+        tool_call_id = (
+            tool_call_id_field if isinstance(tool_call_id_field, str) else None
+        )
+        messages.append(
+            SessionMessage(
+                role=role,
+                content=content,
+                tool_calls=tool_calls_value,
+                tool_call_id=tool_call_id,
+            )
+        )
+    return SessionHistoryResponse(
+        session_id=session.session_id,
+        workspace=str(session.workspace_dir),
+        model_profile=session.metadata.get("model_profile"),
+        messages=messages,
+    )
 
 
 @app.delete("/api/sessions/{session_id}")
@@ -380,6 +484,21 @@ async def delete_session(session_id: str, request: Request) -> dict[str, bool]:
     if not ok:
         raise HTTPException(status_code=404, detail="session not found")
     return {"deleted": True}
+
+
+@app.delete("/api/sessions/{session_id}/chat")
+async def abort_chat(session_id: str, request: Request) -> dict[str, bool]:
+    """Cancel the in-flight chat run for this session, if any.
+
+    Called by the Web UI when the user hits Esc mid-response. Leaves
+    the session and its workspace untouched so the conversation can
+    continue with a new prompt.
+    """
+    state = _state(request)
+    if state.session_store.get(session_id) is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    cancelled = state.abort_inflight(session_id)
+    return {"cancelled": cancelled}
 
 
 @app.post("/api/sessions/{session_id}/chat")
@@ -478,6 +597,19 @@ async def chat(
                     },
                 }
             )
+        except asyncio.CancelledError:
+            # The abort endpoint or disconnected client cancelled us.
+            # Surface it as a friendly error event so the UI can render
+            # it instead of just silently hanging the bubble.
+            log.info("chat cancelled for session %s", session.session_id)
+            log_error = "cancelled"
+            await queue.put(
+                {
+                    "event": "error",
+                    "data": {"error": "Chat cancelled by user.", "cancelled": True},
+                }
+            )
+            raise
         except LLMError as e:
             # All providers failed. Surface a friendly hint instead of the
             # full multi-provider traceback.
@@ -508,6 +640,10 @@ async def chat(
             )
         finally:
             duration_ms = int((time.monotonic() - started_at) * 1000)
+            # Always save whatever messages we managed to collect — even
+            # on cancel / error — so the user can re-open the session.
+            with contextlib.suppress(Exception):
+                state.save_session(session)
             with contextlib.suppress(Exception):
                 state.run_logger.record(
                     build_run_record(
@@ -528,6 +664,8 @@ async def chat(
             await queue.put(None)  # sentinel
 
     task = asyncio.create_task(runner())
+    state.register_inflight(session.session_id, task)
+    task.add_done_callback(lambda t: state.clear_inflight(session.session_id, t))
 
     async def event_stream() -> AsyncIterator[dict[str, str]]:
         try:

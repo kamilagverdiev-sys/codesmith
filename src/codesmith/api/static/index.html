@@ -602,6 +602,7 @@ let modelProfiles = [];
 
 const DEBUG_STORAGE_KEY = 'codesmith.debugSteps';
 const PROFILE_STORAGE_KEY = 'codesmith.modelProfile';
+const SESSION_STORAGE_KEY = 'codesmith.sessionId';
 
 // ---- helpers ----
 function el(tag, attrs = {}, ...children) {
@@ -897,6 +898,7 @@ async function ensureSession() {
   if (!r.ok) throw new Error('failed to create session');
   const data = await r.json();
   sessionId = data.session_id;
+  localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
   currentProfileKey = data.model_profile || currentModelProfile();
   if (currentProfileKey && modelProfileEl) {
     modelProfileEl.value = currentProfileKey;
@@ -911,6 +913,87 @@ async function dropSession() {
   try { await fetch('/api/sessions/' + sessionId, { method: 'DELETE' }); }
   catch (e) { /* ignore */ }
   sessionId = null;
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+async function abortInflight() {
+  if (!inflight) return;
+  try { inflight.abort(); } catch (e) { /* ignore */ }
+  if (sessionId) {
+    try {
+      await fetch('/api/sessions/' + sessionId + '/chat', { method: 'DELETE' });
+    } catch (e) { /* best-effort */ }
+  }
+}
+
+// ---- restore chat from persisted session ----
+async function restoreSession() {
+  const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+  if (!saved) return;
+  let payload;
+  try {
+    const r = await fetch('/api/sessions/' + saved + '/messages');
+    if (!r.ok) {
+      // Session is gone server-side (DB cleared, persistence disabled,
+      // etc.) — forget it locally too.
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    payload = await r.json();
+  } catch (e) {
+    return;
+  }
+  if (!payload || !Array.isArray(payload.messages) || payload.messages.length === 0) {
+    return;
+  }
+
+  sessionId = payload.session_id;
+  if (payload.model_profile && modelProfileEl) {
+    // Match the profile the session was last running on.
+    const option = Array.from(modelProfileEl.options).find(o => o.value === payload.model_profile);
+    if (option) {
+      modelProfileEl.value = payload.model_profile;
+      currentProfileKey = payload.model_profile;
+      updateModelStatus();
+    }
+  }
+  clearEmpty();
+  renderHistory(payload.messages);
+}
+
+function renderHistory(messages) {
+  let currentAssistant = null;
+  for (const m of messages) {
+    if (m.role === 'user') {
+      currentAssistant = null;
+      const turn = el('div', { class: 'turn user' },
+        el('div', { class: 'who', text: 'you' }),
+        el('div', { class: 'bubble', text: m.content || '' }),
+      );
+      chatEl.appendChild(turn);
+      continue;
+    }
+    if (m.role === 'assistant') {
+      // Only render assistant turns that carry final text; intermediate
+      // tool-calling-only assistant messages get collapsed into a step
+      // count in live mode and are not interesting on reload.
+      const text = (m.content || '').trim();
+      if (!text) continue;
+      const turn = el('div', { class: 'turn assistant' },
+        el('div', { class: 'who', text: 'codesmith' }),
+      );
+      const bubble = el('div', { class: 'bubble' });
+      renderMarkdownInto(bubble, text);
+      attachCopyButton(bubble, () => text);
+      turn.appendChild(bubble);
+      chatEl.appendChild(turn);
+      currentAssistant = turn;
+      continue;
+    }
+    // Skip `tool` and any other roles — they're internal and noisy
+    // when rendered as part of a transcript.
+  }
+  scrollToBottom();
 }
 
 // ---- info / health ----
@@ -1182,7 +1265,7 @@ inputEl.addEventListener('keydown', (e) => {
     send();
   }
   if (e.key === 'Escape' && inflight) {
-    inflight.abort();
+    abortInflight();
   }
 });
 inputEl.addEventListener('input', () => {
@@ -1210,7 +1293,7 @@ modelProfileEl.addEventListener('change', async () => {
   }
 });
 newSessionBtn.addEventListener('click', async () => {
-  if (inflight) inflight.abort();
+  if (inflight) await abortInflight();
   await dropSession();
   chatEl.innerHTML = '';
   chatEl.appendChild(emptyEl);
@@ -1225,7 +1308,10 @@ document.addEventListener('click', (e) => {
 });
 
 loadInfo();
-loadModels();
+(async () => {
+  await loadModels();
+  await restoreSession();
+})();
 inputEl.focus();
 </script>
 </body>

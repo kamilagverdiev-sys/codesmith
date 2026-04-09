@@ -210,6 +210,225 @@ def test_runs_endpoint_limit_is_honored(
     assert "msg 1" in body["runs"][1]["user_message"]
 
 
+# ============================================================
+# Session persistence + restore
+# ============================================================
+
+
+def test_get_session_messages_returns_full_history(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/chat",
+        json={"message": "persist me"},
+    ) as resp:
+        resp.read()
+
+    r = client.get(f"/api/sessions/{sid}/messages")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session_id"] == sid
+    # System prompt is hidden from the UI-facing history.
+    roles = [m["role"] for m in body["messages"]]
+    assert "system" not in roles
+    # User turn is preserved with its original text.
+    user_msgs = [m for m in body["messages"] if m["role"] == "user"]
+    assert len(user_msgs) == 1
+    assert user_msgs[0]["content"] == "persist me"
+    # Final assistant text is present.
+    assistant_final = [m for m in body["messages"] if m["role"] == "assistant" and m["content"]]
+    assert any("final answer is 42" in m["content"] for m in assistant_final)
+
+
+def test_get_session_messages_unknown_returns_404(client: TestClient) -> None:
+    r = client.get("/api/sessions/no-such-id/messages")
+    assert r.status_code == 404
+
+
+def test_list_sessions_returns_title_and_metadata(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/chat",
+        json={"message": "name this chat"},
+    ) as resp:
+        resp.read()
+
+    r = client.get("/api/sessions")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) >= 1
+    row = next(item for item in body if item["session_id"] == sid)
+    assert row["title"] == "name this chat"
+    assert row["messages"] >= 2  # user + assistant at minimum
+    assert row["model_profile"] == "config-default"
+
+
+def test_sqlite_session_store_survives_state_rebuild(
+    tmp_path: Path,
+    state: AppState,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simulate a server restart: create+chat, then rebuild AppState on
+    the same config, and confirm the history reloads from disk."""
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+    sid = client.post("/api/sessions").json()["session_id"]
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/chat",
+        json={"message": "should survive restart"},
+    ) as resp:
+        resp.read()
+
+    # Rebuild a brand-new AppState against the same config (same DB
+    # file). The previous live cache is gone, so get() must hit disk.
+    from codesmith.api.main import AppState
+    from codesmith.session_store import SQLiteSessionStore
+
+    fresh_state = AppState(state.config)
+    assert isinstance(fresh_state.session_store, SQLiteSessionStore)
+    loaded = fresh_state.session_store.get(sid)
+    assert loaded is not None
+    roles = [m.get("role") for m in loaded.messages]
+    assert "user" in roles
+    assert any(
+        isinstance(m.get("content"), str) and "should survive restart" in m["content"]
+        for m in loaded.messages
+    )
+
+
+def test_abort_inflight_cancels_registered_task(
+    state: AppState,
+) -> None:
+    """Unit-level test for the abort plumbing in AppState.
+
+    Driving real cancellation through TestClient + SSE + threading is
+    flaky because TestClient serializes the request/response round-trip
+    in one portal thread; instead we hit the exact primitives the DELETE
+    /chat endpoint uses (register_inflight + abort_inflight) and assert
+    the cancellation actually reaches the task.
+    """
+    import asyncio as _asyncio
+
+    async def _scenario() -> tuple[bool, bool]:
+        cancelled = _asyncio.Event()
+
+        async def long_running() -> None:
+            try:
+                await _asyncio.sleep(10)
+            except _asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        task = _asyncio.create_task(long_running())
+        state.register_inflight("sid-abc", task)
+
+        # Let the task actually start before aborting.
+        await _asyncio.sleep(0)
+
+        ok = state.abort_inflight("sid-abc")
+        with contextlib.suppress(_asyncio.CancelledError):
+            await task
+        state.clear_inflight("sid-abc", task)
+
+        return ok, cancelled.is_set()
+
+    import contextlib
+
+    ok, was_cancelled = _asyncio.run(_scenario())
+    assert ok is True
+    assert was_cancelled is True
+    # After the task finishes the inflight map must be empty.
+    assert state._inflight.get("sid-abc") is None
+
+
+def test_abort_inflight_returns_false_when_no_task(state: AppState) -> None:
+    assert state.abort_inflight("no-such-session") is False
+
+
+def test_abort_chat_endpoint_returns_false_for_idle_session(
+    client: TestClient,
+) -> None:
+    """DELETE /chat on a known session with no inflight task is a noop."""
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.delete(f"/api/sessions/{sid}/chat")
+    assert r.status_code == 200
+    assert r.json()["cancelled"] is False
+
+
+def test_abort_chat_unknown_session_404(client: TestClient) -> None:
+    r = client.delete("/api/sessions/no-such-id/chat")
+    assert r.status_code == 404
+
+
+def test_in_memory_backend_config_path(tmp_path: Path) -> None:
+    """Switching sessions.backend to 'memory' must give an InMemorySessionStore."""
+    from unittest.mock import patch as _patch
+
+    from codesmith.api.main import AppState
+    from codesmith.config import (
+        APIConfig,
+        Config,
+        FilesystemToolConfig,
+        LLMConfig,
+        LoggingConfig,
+        LoopsConfig,
+        MemoryConfig,
+        SandboxConfig,
+        SessionsConfig,
+        ToolsConfig,
+        WebSearchToolConfig,
+    )
+    from codesmith.session_store import InMemorySessionStore
+
+    cfg = Config(
+        llm=LLMConfig(provider="ollama", model="qwen2.5-coder:7b"),
+        llm_fallbacks=[],
+        sandbox=SandboxConfig(image="codesmith-sandbox:test"),
+        loops=LoopsConfig(),
+        memory=MemoryConfig(enabled=False),
+        tools=ToolsConfig(
+            filesystem=FilesystemToolConfig(
+                enabled=True, workspace_root=tmp_path / "ws"
+            ),
+            web_search=WebSearchToolConfig(enabled=False),
+        ),
+        sessions=SessionsConfig(backend="memory", path=tmp_path / "unused.db"),
+        api=APIConfig(),
+        logging=LoggingConfig(),
+    )
+
+    class _NoopTool:
+        name = "execute_python"
+        description = "noop"
+
+        def schema(self) -> dict:
+            return {"type": "function", "function": {"name": "execute_python", "parameters": {}}}
+
+        async def run(self, args: dict, session) -> object:  # noqa: ANN001
+            from codesmith.tools.base import ToolResult
+
+            return ToolResult(ok=True, content="noop", error=None)
+
+    with _patch("codesmith.api.main.SandboxTool", lambda _cfg: _NoopTool()):
+        state = AppState(cfg)
+    assert isinstance(state.session_store, InMemorySessionStore)
+
+
 def test_index_serves_static_ui(client: TestClient) -> None:
     r = client.get("/")
     assert r.status_code == 200
@@ -257,23 +476,30 @@ def test_chat_unknown_session_404(client: TestClient) -> None:
 
 
 def _fake_run_factory():
-    """Build a fake Agent.run that fires on_step twice and returns a final."""
+    """Build a fake Agent.run that fires on_step twice and returns a final.
+
+    IMPORTANT: the real Agent.run mutates `session.messages` inside each
+    step(): it appends an assistant message (and any tool results). The
+    session store saves those messages. If the fake does NOT mutate the
+    session, downstream tests that read the persisted history will see
+    only the user message. So we mirror the real behavior here by
+    appending the corresponding assistant/tool messages.
+    """
 
     async def fake_run(self, session, on_step=None):
         # Step 1: tool call
+        tool_call = {
+            "id": "tc-1",
+            "type": "function",
+            "function": {
+                "name": "execute_python",
+                "arguments": json.dumps({"code": "print(1)"}),
+            },
+        }
         step1 = AgentStep(
             response=LLMResponse(
                 content="thinking...",
-                tool_calls=[
-                    {
-                        "id": "tc-1",
-                        "type": "function",
-                        "function": {
-                            "name": "execute_python",
-                            "arguments": json.dumps({"code": "print(1)"}),
-                        },
-                    }
-                ],
+                tool_calls=[tool_call],
                 finish_reason="tool_calls",
                 usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
                 model="test/test",
@@ -281,6 +507,8 @@ def _fake_run_factory():
             ),
             tool_results=[],
         )
+        session.add_assistant(content="thinking...", tool_calls=[tool_call])
+        session.add_tool_result("tc-1", "1")
         if on_step:
             await on_step(step1, 0)
 
@@ -296,6 +524,7 @@ def _fake_run_factory():
             ),
             tool_results=[],
         )
+        session.add_assistant(content="final answer is 42")
         if on_step:
             await on_step(step2, 1)
 
