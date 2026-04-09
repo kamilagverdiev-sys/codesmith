@@ -375,6 +375,159 @@ def test_abort_chat_unknown_session_404(client: TestClient) -> None:
     assert r.status_code == 404
 
 
+# ============================================================
+# Personas + /plan endpoint (5a)
+# ============================================================
+
+
+def test_personas_endpoint_returns_four_roles(client: TestClient) -> None:
+    r = client.get("/api/personas")
+    assert r.status_code == 200
+    body = r.json()
+    keys = [p["key"] for p in body["personas"]]
+    assert keys == ["default", "architect", "coder", "reviewer"]
+    architect = next(p for p in body["personas"] if p["key"] == "architect")
+    assert architect["no_tools"] is True
+
+
+def _fake_architect_run_factory():
+    """A fake agent.run that emits a plausible architect plan as final text."""
+    plan_text = (
+        "## Goal\n"
+        "Make the test pass.\n\n"
+        "## Assumptions\n"
+        "- Python repo with pytest.\n\n"
+        "## Plan\n"
+        "1. read the failing test\n"
+        "2. fix the bug\n"
+        "3. verify with pytest\n\n"
+        "## Acceptance checks\n"
+        "- pytest -q shows 0 failures.\n\n"
+        "## Risks\n"
+        "- None obvious.\n"
+    )
+
+    async def fake_run(self, session, on_step=None):
+        # The architect writes its plan as plain assistant text and
+        # finishes in one step. We mirror that here so the /plan
+        # endpoint reads exactly what the real architect would produce.
+        session.add_assistant(content=plan_text)
+        step = AgentStep(
+            response=LLMResponse(
+                content=plan_text,
+                tool_calls=[],
+                finish_reason="stop",
+                usage={
+                    "prompt_tokens": 40,
+                    "completion_tokens": 20,
+                    "total_tokens": 60,
+                },
+                model="test/architect",
+                raw=None,
+            ),
+            tool_results=[],
+        )
+        if on_step:
+            await on_step(step, 0)
+        return AgentRun(
+            final_text=plan_text,
+            steps=[step],
+            hit_limit=False,
+            total_tokens=60,
+        )
+
+    return fake_run, plan_text
+
+
+def test_plan_endpoint_happy_path(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run, plan_text = _fake_architect_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/plan",
+        json={"task": "fix the failing test in tests/test_foo.py"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["persona"] == "architect"
+    # Endpoint strips trailing whitespace for display.
+    assert body["plan_text"] == plan_text.strip()
+    assert body["steps"] == 1
+    assert body["tokens"] == 60
+    assert body["duration_ms"] >= 0
+
+
+def test_plan_endpoint_stores_plan_on_session(
+    client: TestClient,
+    state: AppState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plan endpoint must park the plan text on session metadata
+    so /execute-plan (5b) and the Web UI can pick it up later."""
+    fake_run, plan_text = _fake_architect_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    client.post(
+        f"/api/sessions/{sid}/plan",
+        json={"task": "build the thing"},
+    )
+
+    session = state.session_store.get(sid)
+    assert session is not None
+    last_plan = session.metadata.get("last_plan")
+    assert last_plan is not None
+    assert last_plan["task"] == "build the thing"
+    assert last_plan["text"] == plan_text.strip()
+    assert "ts" in last_plan
+
+
+def test_plan_endpoint_does_not_pollute_main_chat(
+    client: TestClient,
+    state: AppState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An architect planning turn must leave the main session's
+    messages list untouched — planning runs on an isolated sub-session
+    so chat history stays clean."""
+    fake_run, _ = _fake_architect_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    # Sanity: fresh session has no messages yet.
+    before = client.get(f"/api/sessions/{sid}/messages").json()
+    assert before["messages"] == []
+
+    client.post(
+        f"/api/sessions/{sid}/plan",
+        json={"task": "refactor /api/sessions"},
+    )
+
+    after = client.get(f"/api/sessions/{sid}/messages").json()
+    assert after["messages"] == []  # still empty — plan stayed isolated
+
+
+def test_plan_endpoint_unknown_session_404(client: TestClient) -> None:
+    r = client.post(
+        "/api/sessions/no-such/plan",
+        json={"task": "anything"},
+    )
+    assert r.status_code == 404
+
+
+def test_plan_endpoint_empty_task_validation_error(client: TestClient) -> None:
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/plan",
+        json={"task": ""},
+    )
+    assert r.status_code == 422
+
+
 def test_in_memory_backend_config_path(tmp_path: Path) -> None:
     """Switching sessions.backend to 'memory' must give an InMemorySessionStore."""
     from unittest.mock import patch as _patch

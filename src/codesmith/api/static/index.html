@@ -752,6 +752,75 @@
   }
   .send:hover { opacity: 0.85; }
   .send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .plan-btn {
+    background: transparent;
+    color: var(--accent-2);
+    border: 1px solid var(--accent-2);
+    padding: 0 16px;
+    height: 44px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    flex: 0 0 auto;
+    transition: all 0.15s;
+  }
+  .plan-btn:hover { background: rgba(187,154,247,0.1); }
+  .plan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ---- Architect plan card ---- */
+  .plan-card {
+    background: linear-gradient(180deg, rgba(187,154,247,0.08), rgba(187,154,247,0.02));
+    border: 1px solid rgba(187,154,247,0.35);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 28px;
+  }
+  .plan-card .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    color: var(--accent-2);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .plan-card .head .meta {
+    color: var(--fg-faint);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 10px;
+  }
+  .plan-card .body {
+    color: var(--fg);
+    line-height: 1.55;
+  }
+  .plan-card .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(187,154,247,0.2);
+  }
+  .plan-card .actions button {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    padding: 6px 14px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--mono);
+    transition: all 0.15s;
+  }
+  .plan-card .actions button:hover { color: var(--fg); border-color: var(--accent); }
+  .plan-card .actions .accept {
+    color: var(--accent-2);
+    border-color: var(--accent-2);
+  }
+  .plan-card .actions .accept:hover { background: rgba(187,154,247,0.1); }
   .hint {
     color: var(--fg-faint);
     font-size: 11px;
@@ -827,12 +896,13 @@
       <div class="input-row">
         <textarea
           id="input"
-          placeholder="Type a message... (Ctrl+Enter to send)"
+          placeholder="Type a message... (Ctrl+Enter to send · Ctrl+Shift+Enter to plan)"
           rows="2"
         ></textarea>
+        <button class="plan-btn" id="plan" title="Ask the architect persona to produce an executable plan without touching files">Plan</button>
         <button class="send" id="send">Send</button>
       </div>
-      <div class="hint">Ctrl+Enter - send · Esc - cancel · Ctrl+K - palette · sandbox: docker, network=none</div>
+      <div class="hint">Ctrl+Enter - send · Ctrl+Shift+Enter - plan · Esc - cancel · Ctrl+K - palette · sandbox: docker, network=none</div>
     </footer>
   </div>
 </div>
@@ -860,6 +930,7 @@ const chatEl = $('#chat');
 const emptyEl = $('#empty');
 const inputEl = $('#input');
 const sendBtn = $('#send');
+const planBtn = $('#plan');
 const statusDot = $('#status-dot');
 const metaEl = $('#meta');
 const newSessionBtn = $('#new-session');
@@ -1212,6 +1283,18 @@ function buildPaletteItems() {
       chatEl.innerHTML = '';
       chatEl.appendChild(emptyEl);
       inputEl.focus();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Architect: plan current input',
+    hint: 'ctrl+shift+enter',
+    action: () => {
+      if (!inputEl.value.trim()) {
+        inputEl.focus();
+        return;
+      }
+      runPlan();
     },
   });
   items.push({
@@ -1756,6 +1839,144 @@ function normalizeSSEBuffer(raw) {
   return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
+// ---- Architect (plan) flow ----
+async function runPlan() {
+  const task = inputEl.value.trim();
+  if (!task) return;
+  if (inflight) return;
+
+  clearEmpty();
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  planBtn.disabled = true;
+  sendBtn.disabled = true;
+
+  try {
+    await ensureSession();
+  } catch (e) {
+    showError('Failed to create session: ' + e.message);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  // Render user turn framed as "plan request".
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → architect' }),
+      el('div', { class: 'bubble', text: task }),
+    )
+  );
+
+  // Shell for the architect response.
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / architect' }),
+  );
+  const typingEl = el('div', { class: 'typing', text: 'architect planning' });
+  assistantTurn.appendChild(typingEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task, model_profile: currentEffectiveProfile() }),
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Plan request failed: ' + e.message, assistantTurn);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  typingEl.remove();
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = await resp.json();
+      if (body && body.detail) detail = body.detail;
+    } catch (e) { /* ignore */ }
+    showError('Plan failed (' + resp.status + '): ' + detail, assistantTurn);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    showError('Plan parse failed: ' + e.message, assistantTurn);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  renderPlanCard(assistantTurn, data);
+  refreshRunsPanel();
+  loadSessionList();
+  planBtn.disabled = false;
+  sendBtn.disabled = false;
+  inputEl.focus();
+}
+
+function renderPlanCard(parent, data) {
+  const card = el('div', { class: 'plan-card' });
+
+  const head = el('div', { class: 'head' });
+  head.appendChild(el('span', { text: 'architect plan' }));
+  head.appendChild(el('span', {
+    class: 'meta',
+    text: (data.provider || '') + '/' + (data.model || '') +
+          '  ·  ' + (data.steps || 0) + ' step · ' +
+          (data.tokens || 0) + ' tok · ' +
+          (data.duration_ms || 0) + 'ms',
+  }));
+  card.appendChild(head);
+
+  const body = el('div', { class: 'body' });
+  renderMarkdownInto(body, data.plan_text || '(empty plan)');
+  card.appendChild(body);
+
+  const actions = el('div', { class: 'actions' });
+  const accept = el('button', { class: 'accept', text: 'Accept & execute' });
+  accept.addEventListener('click', () => {
+    // 5b will wire this to /execute-plan. For now, just drop the plan
+    // text into the input box so the user can send it through the
+    // normal chat flow with the coder persona.
+    inputEl.value =
+      'Execute this plan step by step. Do not deviate. Use tools.\n\n' +
+      (data.plan_text || '');
+    inputEl.focus();
+  });
+  const copy = el('button', { text: 'Copy' });
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(data.plan_text || '');
+      copy.textContent = 'Copied';
+      setTimeout(() => (copy.textContent = 'Copy'), 1500);
+    } catch (e) {
+      copy.textContent = 'Copy failed';
+    }
+  });
+  const replan = el('button', { text: 'Replan' });
+  replan.addEventListener('click', () => {
+    inputEl.value = 'Revise this plan:\n\n' + (data.plan_text || '');
+    inputEl.focus();
+    setTimeout(() => runPlan(), 50);
+  });
+  actions.appendChild(accept);
+  actions.appendChild(copy);
+  actions.appendChild(replan);
+  card.appendChild(actions);
+
+  parent.appendChild(card);
+  scrollToBottom();
+}
+
 function parseSSE(raw) {
   const lines = raw.split('\n');
   let event = 'message';
@@ -1870,12 +2091,19 @@ function showError(msg, parent, details) {
 inputEl.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
-    send();
+    if (e.shiftKey) {
+      runPlan();
+    } else {
+      send();
+    }
   }
   if (e.key === 'Escape' && inflight) {
     abortInflight();
   }
 });
+if (planBtn) {
+  planBtn.addEventListener('click', runPlan);
+}
 
 // ---- global hotkeys: Ctrl+K opens the command palette ----
 document.addEventListener('keydown', (e) => {

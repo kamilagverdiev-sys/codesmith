@@ -49,6 +49,7 @@ from codesmith.model_selection import (
     pull_target_for_selection,
     resolve_model_profile,
 )
+from codesmith.personas import ARCHITECT, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
 from codesmith.tools.filesystem import default_filesystem_tools
@@ -75,7 +76,15 @@ def _setup_logging(level: str) -> None:
 def _build_agent(
     config_path: Path,
     model_profile: str | None = None,
+    persona: Persona | None = None,
 ) -> tuple[Agent, Session, Config, ResolvedModelProfile]:
+    """Build a ready-to-run Agent + fresh Session.
+
+    When `persona` is provided, its system prompt replaces the default,
+    and — if the persona is declared no_tools — the tool registry is
+    left empty so the LLM cannot even see tool schemas. This is how the
+    CLI `plan` command runs ARCHITECT in a tool-less sandbox.
+    """
     config = load_config(config_path)
     _setup_logging(config.logging.level)
 
@@ -90,16 +99,26 @@ def _build_agent(
     router = LLMRouter(primary=resolved.primary, fallbacks=resolved.fallbacks)
 
     registry = ToolRegistry()
-    # Phase 1 tools
-    registry.register(SandboxTool(config.sandbox))
-    if config.tools.filesystem.enabled:
-        for t in default_filesystem_tools():
-            registry.register(t)
+    if persona is None or not persona.no_tools:
+        registry.register(SandboxTool(config.sandbox))
+        if config.tools.filesystem.enabled:
+            for t in default_filesystem_tools():
+                registry.register(t)
 
-    agent = Agent(config=config, llm=router, registry=registry)
+    agent_kwargs: dict[str, Any] = {
+        "config": config,
+        "llm": router,
+        "registry": registry,
+    }
+    if persona is not None:
+        agent_kwargs["system_prompt"] = persona.system_prompt
+    agent = Agent(**agent_kwargs)
+
     session = Session.create(workspace_root=config.tools.filesystem.workspace_root)
     session.metadata["model_profile"] = resolved.key
     session.metadata["resolved_model"] = f"{resolved.primary.provider}/{resolved.primary.model}"
+    if persona is not None:
+        session.metadata["persona"] = persona.key
     return agent, session, config, resolved
 
 
@@ -292,6 +311,79 @@ def models(
 
     local = ", ".join(installed) if installed else "[dim]none discovered[/dim]"
     console.print(Panel(local, title="installed ollama models", border_style="cyan"))
+
+
+@app.command()
+def plan(
+    task: Annotated[str, typer.Argument(help="Task for the architect to plan")],
+    config: Annotated[Path, typer.Option("--config", "-c")] = Path("config.yaml"),
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
+) -> None:
+    """Architect mode: produce a numbered, executable plan without touching files.
+
+    The ARCHITECT persona has no tools — it only writes the plan. Use
+    `codesmith solve` (with the self-repair loop) or `codesmith chat`
+    afterwards to actually execute the plan step by step.
+    """
+    agent, session, _cfg, resolved = _build_agent(config, profile, persona=ARCHITECT)
+    agent.max_iterations = 3  # plans are short, no need to burn budget
+
+    console.print(Rule("[bold cyan]Codesmith architect"))
+    console.print(
+        f"[dim]session={session.session_id[:8]}  "
+        f"model={resolved.primary.provider}/{resolved.primary.model}  "
+        f"persona=architect[/dim]\n"
+    )
+
+    session.add_user(task)
+    started = time.monotonic()
+    run = None
+    error: str | None = None
+    try:
+        run = asyncio.run(agent.run(session))
+    except Exception as e:  # noqa: BLE001
+        error = f"{type(e).__name__}: {e}"
+        console.print(f"[red]{error}[/red]")
+    finally:
+        _log_run(
+            resolved=resolved,
+            session=session,
+            run=run,
+            message=task,
+            started=started,
+            error=error,
+            caller="cli.plan",
+        )
+
+    if run is None:
+        raise typer.Exit(1)
+
+    console.print(
+        Panel(
+            run.final_text or "[dim](no plan)[/dim]",
+            title="plan",
+            border_style="cyan",
+        )
+    )
+    _print_stats(steps=len(run.steps), tokens=run.total_tokens, hit_limit=run.hit_limit)
+
+
+@app.command()
+def personas(
+    config: Annotated[Path, typer.Option("--config", "-c")] = Path("config.yaml"),
+) -> None:
+    """List the available agent personas."""
+    load_config(config)  # validate config early so misconfiguration fails fast
+    console.print(Rule("[bold cyan]Codesmith personas"))
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    table.add_column("key", style="cyan")
+    table.add_column("label")
+    table.add_column("tools")
+    table.add_column("description", style="dim")
+    for p in list_personas():
+        tools = "[yellow]no tools[/yellow]" if p.no_tools else "[green]tools on[/green]"
+        table.add_row(p.key, p.label, tools, p.description)
+    console.print(Panel(table, title="personas", border_style="cyan"))
 
 
 @app.command()

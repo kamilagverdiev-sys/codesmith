@@ -29,6 +29,7 @@ import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -48,6 +49,7 @@ from codesmith.model_selection import (
     list_model_profiles,
     resolve_model_profile,
 )
+from codesmith.personas import ARCHITECT, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
 from codesmith.session_store import (
@@ -105,14 +107,31 @@ class AppState:
         # Abort endpoint calls .cancel() on the task.
         self._inflight: dict[str, asyncio.Task[Any]] = {}
 
-    def make_agent(self, model_profile: str | None = None) -> Agent:
+    def make_agent(
+        self,
+        model_profile: str | None = None,
+        persona: Persona | None = None,
+    ) -> Agent:
         resolved = resolve_model_profile(
             self.config,
             model_profile,
             list_installed_ollama_models(self.config),
         )
         router = LLMRouter(primary=resolved.primary, fallbacks=resolved.fallbacks)
-        return Agent(config=self.config, llm=router, registry=self.registry)
+        # When the caller passed a tool-less persona (e.g. ARCHITECT),
+        # give the agent an EMPTY registry so the LLM cannot see any
+        # tools in its prompt — much cheaper than patching the agent
+        # loop to ignore tools on the fly.
+        registry = self.registry
+        if persona is not None and persona.no_tools:
+            registry = ToolRegistry()
+        prompt = persona.system_prompt if persona is not None else DEFAULT_SYSTEM_PROMPT
+        return Agent(
+            config=self.config,
+            llm=router,
+            registry=registry,
+            system_prompt=prompt,
+        )
 
     async def create_session(self, model_profile: str | None = None) -> Session:
         async with self._lock:
@@ -280,6 +299,33 @@ class ModelsResponse(BaseModel):
     installed_ollama_models: list[str]
 
 
+class PersonaResponse(BaseModel):
+    key: str
+    label: str
+    description: str
+    no_tools: bool
+
+
+class PersonasListResponse(BaseModel):
+    personas: list[PersonaResponse]
+
+
+class PlanRequest(BaseModel):
+    task: str = Field(..., min_length=1)
+    model_profile: str | None = None
+
+
+class PlanResponse(BaseModel):
+    session_id: str
+    persona: str
+    provider: str
+    model: str
+    plan_text: str
+    steps: int
+    tokens: int
+    duration_ms: int
+
+
 class RunLogEntry(BaseModel):
     ts: str
     session_id: str
@@ -369,6 +415,120 @@ async def list_runs(
     # Newest first — matches what a user scanning the panel expects.
     entries.reverse()
     return RunsResponse(runs=entries, path=str(state.run_logger.path))
+
+
+@app.get("/api/personas", response_model=PersonasListResponse)
+async def personas_list() -> PersonasListResponse:
+    """Return all registered personas — used by the UI palette."""
+    items = [
+        PersonaResponse(
+            key=p.key,
+            label=p.label,
+            description=p.description,
+            no_tools=p.no_tools,
+        )
+        for p in list_personas()
+    ]
+    return PersonasListResponse(personas=items)
+
+
+@app.post("/api/sessions/{session_id}/plan", response_model=PlanResponse)
+async def plan(
+    session_id: str,
+    payload: PlanRequest,
+    request: Request,
+) -> PlanResponse:
+    """Run the ARCHITECT persona on a task and return a plan.
+
+    This is a SHORT, one-shot call (no SSE): the architect has no tools
+    and is capped to a tight iteration budget, so it finishes in one or
+    two LLM calls. The resulting plan is stored on the session under
+    metadata["last_plan"] so the UI / execute-plan endpoint can pick it
+    up later, but it is NOT added to the main chat history — planning
+    and chatting stay on separate tracks.
+    """
+    state = _state(request)
+    session = state.get_session(session_id)
+    selected_profile = payload.model_profile or session.metadata.get("model_profile")
+    try:
+        resolved_profile = resolve_model_profile(
+            state.config,
+            selected_profile,
+            list_installed_ollama_models(state.config),
+        )
+    except UnknownModelProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Build an ISOLATED session for planning so the architect's
+    # conversation does not pollute the main chat history.
+    plan_session = Session(
+        session_id=session.session_id + "::plan",
+        messages=[],
+        workspace_dir=session.workspace_dir,
+        metadata={"model_profile": resolved_profile.key, "role": "planner"},
+    )
+    plan_session.add_system(ARCHITECT.system_prompt)
+    plan_session.add_user(payload.task)
+
+    agent = state.make_agent(resolved_profile.key, persona=ARCHITECT)
+    # Plans are short: two iterations is usually one assistant turn.
+    agent.max_iterations = 3
+
+    started_at = time.monotonic()
+    log_error: str | None = None
+    run = None
+    try:
+        run = await agent.run(plan_session)
+    except LLMError as e:
+        log.warning("plan LLM error: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="LLM backend unavailable for planning. Run codesmith info.",
+        ) from e
+    except Exception as e:  # noqa: BLE001
+        log.exception("plan failed")
+        log_error = f"{type(e).__name__}: {e}"
+        raise HTTPException(status_code=500, detail=log_error) from e
+    finally:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        with contextlib.suppress(Exception):
+            state.run_logger.record(
+                build_run_record(
+                    session_id=session.session_id,
+                    profile_key=resolved_profile.key,
+                    provider=resolved_profile.primary.provider,
+                    model=resolved_profile.primary.model,
+                    user_message=payload.task,
+                    steps=len(run.steps) if run else 0,
+                    tokens=run.total_tokens if run else 0,
+                    hit_limit=bool(run.hit_limit) if run else False,
+                    duration_ms=duration_ms,
+                    forced_final=bool(run.forced_final) if run else False,
+                    error=log_error,
+                    extra={"caller": "web.plan", "persona": "architect"},
+                )
+            )
+
+    plan_text = (run.final_text or "").strip()
+    session.metadata["last_plan"] = {
+        "task": payload.task,
+        "text": plan_text,
+        "provider": resolved_profile.primary.provider,
+        "model": resolved_profile.primary.model,
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    state.save_session(session)
+
+    return PlanResponse(
+        session_id=session.session_id,
+        persona=ARCHITECT.key,
+        provider=resolved_profile.primary.provider,
+        model=resolved_profile.primary.model,
+        plan_text=plan_text,
+        steps=len(run.steps),
+        tokens=run.total_tokens,
+        duration_ms=int((time.monotonic() - started_at) * 1000),
+    )
 
 
 @app.get("/api/models", response_model=ModelsResponse)
