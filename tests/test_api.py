@@ -85,6 +85,11 @@ def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[AppState]
 
     with patch("codesmith.api.main.SandboxTool", lambda _cfg: _NoopTool()):
         s = AppState(cfg)
+    # Redirect the run log into tmp_path so tests don't touch the user's
+    # real ~/.codesmith/logs/runs.jsonl file.
+    from codesmith.run_logger import RunLogger
+
+    s.run_logger = RunLogger(tmp_path / "runs.jsonl")
     yield s
 
 
@@ -139,6 +144,70 @@ def test_models_endpoint_returns_profiles(client: TestClient) -> None:
     profile_keys = {item["key"] for item in body["profiles"]}
     assert "config-default" in profile_keys
     assert "local-auto" in profile_keys
+
+
+def test_runs_endpoint_returns_empty_list_by_default(client: TestClient) -> None:
+    r = client.get("/api/runs")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["runs"] == []
+    assert body["path"]
+
+
+def test_runs_endpoint_after_chat_contains_final_run(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/chat",
+        json={"message": "observe me"},
+    ) as resp:
+        assert resp.status_code == 200
+        resp.read()  # drain
+
+    r = client.get("/api/runs?limit=5")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["runs"]) == 1
+    run = body["runs"][0]
+    assert run["session_id"] == sid
+    assert run["profile"] == "config-default"
+    assert run["steps"] == 2
+    assert run["tokens"] == 43
+    assert run["forced_final"] is False
+    assert run["hit_limit"] is False
+    assert run["error"] is None
+    assert run["caller"] == "web"
+    assert "observe me" in run["user_message"]
+
+
+def test_runs_endpoint_limit_is_honored(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+    sid = client.post("/api/sessions").json()["session_id"]
+    for i in range(3):
+        with client.stream(
+            "POST",
+            f"/api/sessions/{sid}/chat",
+            json={"message": f"msg {i}"},
+        ) as resp:
+            resp.read()
+
+    r = client.get("/api/runs?limit=2")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["runs"]) == 2
+    # Newest first: the last message posted is index 2 ("msg 2").
+    assert "msg 2" in body["runs"][0]["user_message"]
+    assert "msg 1" in body["runs"][1]["user_message"]
 
 
 def test_index_serves_static_ui(client: TestClient) -> None:

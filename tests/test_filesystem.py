@@ -14,6 +14,8 @@ import pytest
 
 from codesmith.tools.filesystem import (
     EditFileTool,
+    GlobWorkspaceTool,
+    GrepWorkspaceTool,
     ListDirTool,
     PathEscapeError,
     ReadFileTool,
@@ -251,4 +253,162 @@ class TestEditFile:
 
 def test_default_filesystem_tools_includes_edit_file() -> None:
     names = {t.name for t in default_filesystem_tools()}
-    assert {"read_file", "write_file", "edit_file", "list_directory"} <= names
+    assert {
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_directory",
+        "grep_workspace",
+        "glob_workspace",
+    } <= names
+
+
+# ============================================================
+# GrepWorkspaceTool
+# ============================================================
+
+
+@pytest.fixture
+def search_workspace(tmp_path: Path) -> Path:
+    """Small tree with Python files, a markdown file, a big binary, and
+    a node_modules dir that must be skipped."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "src").mkdir()
+    (ws / "src" / "app.py").write_text(
+        "def greet(name):\n    return 'hello ' + name\n\n# TODO: unit test\n",
+        encoding="utf-8",
+    )
+    (ws / "src" / "utils.py").write_text(
+        "def helper():\n    pass  # TODO: rewrite helper\n",
+        encoding="utf-8",
+    )
+    (ws / "README.md").write_text(
+        "# Project\n\nSome notes. TODO: write docs.\n",
+        encoding="utf-8",
+    )
+    # A path we expect grep/glob to SKIP:
+    (ws / "node_modules").mkdir()
+    (ws / "node_modules" / "bad.js").write_text("TODO: should be skipped\n", encoding="utf-8")
+    # A binary-by-suffix file we expect to SKIP:
+    (ws / "src" / "image.png").write_bytes(b"\x89PNG\r\nTODO stuff\n")
+    return ws
+
+
+@pytest.fixture
+def search_session(search_workspace: Path) -> _FakeSession:
+    return _FakeSession(workspace_dir=search_workspace)
+
+
+class TestGrepWorkspace:
+    async def test_finds_matches_and_skips_noise(self, search_session: _FakeSession) -> None:
+        tool = GrepWorkspaceTool()
+        result = await tool.execute(search_session, pattern="TODO")
+        assert result.ok
+        content = result.content
+        assert "src/app.py" in content
+        assert "src/utils.py" in content
+        assert "README.md" in content
+        # Skip dirs / binary suffixes must NOT appear.
+        assert "node_modules/bad.js" not in content
+        assert "image.png" not in content
+        assert result.metadata["matches"] >= 3
+
+    async def test_include_glob_narrows_scope(
+        self, search_session: _FakeSession
+    ) -> None:
+        tool = GrepWorkspaceTool()
+        result = await tool.execute(
+            search_session,
+            pattern="TODO",
+            include="*.py",
+        )
+        assert result.ok
+        assert "src/app.py" in result.content
+        assert "src/utils.py" in result.content
+        assert "README.md" not in result.content
+
+    async def test_case_insensitive_flag(self, search_session: _FakeSession) -> None:
+        tool = GrepWorkspaceTool()
+        result = await tool.execute(
+            search_session,
+            pattern="hello",
+            case_insensitive=True,
+        )
+        assert result.ok
+        assert "src/app.py" in result.content
+
+    async def test_no_matches(self, search_session: _FakeSession) -> None:
+        tool = GrepWorkspaceTool()
+        result = await tool.execute(search_session, pattern="nothing-here-at-all")
+        assert result.ok
+        assert "(no matches)" in result.content
+        assert result.metadata["matches"] == 0
+
+    async def test_bad_regex_is_rejected(self, search_session: _FakeSession) -> None:
+        tool = GrepWorkspaceTool()
+        result = await tool.execute(search_session, pattern="(")
+        assert not result.ok
+        assert "bad regex" in (result.error or "")
+
+    async def test_empty_pattern_is_rejected(self, search_session: _FakeSession) -> None:
+        tool = GrepWorkspaceTool()
+        result = await tool.execute(search_session, pattern="")
+        assert not result.ok
+
+    async def test_escape_rejected(self, search_session: _FakeSession) -> None:
+        tool = GrepWorkspaceTool()
+        result = await tool.execute(
+            search_session, pattern="TODO", path="../../../etc"
+        )
+        assert not result.ok
+        assert "escape" in (result.error or "")
+
+
+# ============================================================
+# GlobWorkspaceTool
+# ============================================================
+
+
+class TestGlobWorkspace:
+    async def test_finds_python_files_recursively(
+        self, search_session: _FakeSession
+    ) -> None:
+        tool = GlobWorkspaceTool()
+        result = await tool.execute(search_session, pattern="**/*.py")
+        assert result.ok
+        assert "src/app.py" in result.content
+        assert "src/utils.py" in result.content
+        # Not a .py — must not appear.
+        assert "README.md" not in result.content
+        # Skip dir must not appear.
+        assert "node_modules" not in result.content
+
+    async def test_flat_glob_in_root(self, search_session: _FakeSession) -> None:
+        tool = GlobWorkspaceTool()
+        result = await tool.execute(search_session, pattern="*.md")
+        assert result.ok
+        assert "README.md" in result.content
+
+    async def test_subdirectory_scope(self, search_session: _FakeSession) -> None:
+        tool = GlobWorkspaceTool()
+        result = await tool.execute(
+            search_session, pattern="*.py", path="src"
+        )
+        assert result.ok
+        assert "src/app.py" in result.content
+
+    async def test_empty_pattern_is_rejected(
+        self, search_session: _FakeSession
+    ) -> None:
+        tool = GlobWorkspaceTool()
+        result = await tool.execute(search_session, pattern="")
+        assert not result.ok
+
+    async def test_escape_rejected(self, search_session: _FakeSession) -> None:
+        tool = GlobWorkspaceTool()
+        result = await tool.execute(
+            search_session, pattern="*.py", path="../../.."
+        )
+        assert not result.ok
+        assert "escape" in (result.error or "")

@@ -32,7 +32,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -229,6 +229,27 @@ class ModelsResponse(BaseModel):
     installed_ollama_models: list[str]
 
 
+class RunLogEntry(BaseModel):
+    ts: str
+    session_id: str
+    profile: str
+    provider: str
+    model: str
+    steps: int
+    tokens: int
+    hit_limit: bool
+    forced_final: bool
+    duration_ms: int
+    error: str | None = None
+    user_message: str = ""
+    caller: str = ""
+
+
+class RunsResponse(BaseModel):
+    runs: list[RunLogEntry]
+    path: str
+
+
 # ============================================================
 # Endpoints
 # ============================================================
@@ -262,6 +283,41 @@ async def info(request: Request) -> InfoResponse:
         memory_enabled=cfg.memory.enabled,
         web_search_enabled=cfg.tools.web_search.enabled,
     )
+
+
+@app.get("/api/runs", response_model=RunsResponse)
+async def list_runs(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+) -> RunsResponse:
+    """Return the last N completed agent runs from the JSONL log.
+
+    Backed by the same RunLogger the CLI `codesmith logs` reads — this
+    endpoint just exposes it to the Web UI observability panel.
+    """
+    state = _state(request)
+    records = state.run_logger.tail(limit)
+    entries = [
+        RunLogEntry(
+            ts=r.ts,
+            session_id=r.session_id,
+            profile=r.profile,
+            provider=r.provider,
+            model=r.model,
+            steps=r.steps,
+            tokens=r.tokens,
+            hit_limit=r.hit_limit,
+            forced_final=r.forced_final,
+            duration_ms=r.duration_ms,
+            error=r.error,
+            user_message=r.user_message,
+            caller=str(r.extra.get("caller", "")),
+        )
+        for r in records
+    ]
+    # Newest first — matches what a user scanning the panel expects.
+    entries.reverse()
+    return RunsResponse(runs=entries, path=str(state.run_logger.path))
 
 
 @app.get("/api/models", response_model=ModelsResponse)

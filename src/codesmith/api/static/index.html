@@ -240,6 +240,104 @@
   .copy-btn:hover { color: var(--fg); border-color: var(--accent); }
   .copy-btn.done { color: var(--green); border-color: var(--green); }
 
+  /* Runs panel — observability tail, only visible in debug mode */
+  .runs-panel {
+    position: fixed;
+    right: 20px;
+    bottom: 110px;
+    width: 320px;
+    max-height: 360px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 10;
+  }
+  .runs-panel.visible { display: flex; }
+  .runs-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-3);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .runs-head .refresh {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    padding: 2px 8px;
+    font-size: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--mono);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .runs-head .refresh:hover { color: var(--fg); border-color: var(--accent); }
+  .runs-body {
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .run-item {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--fg-dim);
+  }
+  .run-item:last-child { border-bottom: none; }
+  .run-item .top {
+    display: flex;
+    justify-content: space-between;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .run-item .top .flag {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .run-item .top .flag.ok { background: rgba(158,206,106,0.12); color: var(--green); }
+  .run-item .top .flag.err { background: rgba(247,118,142,0.12); color: var(--red); }
+  .run-item .top .flag.forced { background: rgba(224,175,104,0.12); color: var(--yellow); }
+  .run-item .stats {
+    display: flex;
+    gap: 10px;
+    color: var(--fg-faint);
+    font-size: 10px;
+    margin-top: 2px;
+  }
+  .run-item .msg {
+    margin-top: 3px;
+    color: var(--fg-faint);
+    font-family: var(--sans);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+  }
+  .runs-empty {
+    color: var(--fg-faint);
+    text-align: center;
+    padding: 20px 12px;
+    font-size: 11px;
+  }
+
   .step {
     margin-top: 12px;
     background: var(--bg-3);
@@ -459,6 +557,16 @@
   </div>
 </main>
 
+<aside class="runs-panel" id="runs-panel">
+  <div class="runs-head">
+    <span>recent runs</span>
+    <button class="refresh" id="runs-refresh" title="Reload runs">refresh</button>
+  </div>
+  <div class="runs-body" id="runs-body">
+    <div class="runs-empty">loading…</div>
+  </div>
+</aside>
+
 <footer>
   <div class="input-row">
     <textarea
@@ -483,6 +591,9 @@ const newSessionBtn = $('#new-session');
 const modelProfileEl = $('#model-profile');
 const modelStatusEl = $('#model-status');
 const debugStepsEl = $('#debug-steps');
+const runsPanelEl = $('#runs-panel');
+const runsBodyEl = $('#runs-body');
+const runsRefreshBtn = $('#runs-refresh');
 
 let sessionId = null;
 let inflight = null; // { abort: () => void }
@@ -637,6 +748,68 @@ function appendInline(parent, text) {
   }
   if (lastIdx < text.length) {
     parent.appendChild(document.createTextNode(text.slice(lastIdx)));
+  }
+}
+
+async function refreshRunsPanel() {
+  if (!runsBodyEl) return;
+  if (!debugStepsEnabled()) return;
+  try {
+    const r = await fetch('/api/runs?limit=20');
+    if (!r.ok) throw new Error('runs fetch failed: ' + r.status);
+    const payload = await r.json();
+    renderRuns(payload.runs || []);
+  } catch (e) {
+    runsBodyEl.innerHTML = '';
+    runsBodyEl.appendChild(el('div', { class: 'runs-empty', text: 'failed to load: ' + e.message }));
+  }
+}
+
+function renderRuns(runs) {
+  if (!runsBodyEl) return;
+  runsBodyEl.innerHTML = '';
+  if (!runs || runs.length === 0) {
+    runsBodyEl.appendChild(el('div', { class: 'runs-empty', text: '(no runs logged yet)' }));
+    return;
+  }
+  for (const r of runs) {
+    const item = el('div', { class: 'run-item' });
+
+    // Top line: short timestamp + profile + flag badge
+    const tsShort = (r.ts || '').slice(11, 19) || (r.ts || '').slice(0, 10);
+    const flagCls = r.error ? 'err' : (r.forced_final ? 'forced' : 'ok');
+    const flagText = r.error ? 'error' : (r.forced_final ? 'forced' : 'ok');
+    const top = el('div', { class: 'top' },
+      el('span', { text: tsShort + '  ' + (r.profile || '-') }),
+      el('span', { class: 'flag ' + flagCls, text: flagText })
+    );
+    item.appendChild(top);
+
+    // Model + stats line
+    const modelLine = (r.provider || '') + '/' + (r.model || '');
+    item.appendChild(el('div', { class: 'stats' },
+      el('span', { text: modelLine }),
+      el('span', { text: 'steps:' + (r.steps || 0) }),
+      el('span', { text: 'tok:' + (r.tokens || 0) }),
+      el('span', { text: (r.duration_ms || 0) + 'ms' })
+    ));
+
+    if (r.error) {
+      item.appendChild(el('div', { class: 'msg', text: r.error }));
+    } else if (r.user_message) {
+      item.appendChild(el('div', { class: 'msg', text: r.user_message }));
+    }
+    runsBodyEl.appendChild(item);
+  }
+}
+
+function setRunsPanelVisible(visible) {
+  if (!runsPanelEl) return;
+  if (visible) {
+    runsPanelEl.classList.add('visible');
+    refreshRunsPanel();
+  } else {
+    runsPanelEl.classList.remove('visible');
   }
 }
 
@@ -971,12 +1144,14 @@ function handleEvent(ev, ctx) {
     if (d.hit_limit) {
       ctx.statsEl.appendChild(el('span', { class: 'warn', text: 'warning: hit iteration limit' }));
     }
+    refreshRunsPanel();
     return;
   }
 
   if (ev.event === 'error') {
     ctx.typingEl.remove();
     showError(ev.data.error || 'unknown error', ctx.assistantTurn, ev.data.details);
+    refreshRunsPanel();
     return;
   }
 }
@@ -1018,7 +1193,12 @@ sendBtn.addEventListener('click', send);
 debugStepsEl.checked = localStorage.getItem(DEBUG_STORAGE_KEY) === 'true';
 debugStepsEl.addEventListener('change', () => {
   localStorage.setItem(DEBUG_STORAGE_KEY, debugStepsEl.checked ? 'true' : 'false');
+  setRunsPanelVisible(debugStepsEl.checked);
 });
+if (runsRefreshBtn) {
+  runsRefreshBtn.addEventListener('click', () => refreshRunsPanel());
+}
+setRunsPanelVisible(debugStepsEl.checked);
 modelProfileEl.addEventListener('change', async () => {
   localStorage.setItem(PROFILE_STORAGE_KEY, modelProfileEl.value);
   currentProfileKey = modelProfileEl.value;
