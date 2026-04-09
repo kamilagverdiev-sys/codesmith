@@ -35,6 +35,7 @@ class Session:
     def create(cls, workspace_root: Path, session_id: str | None = None) -> Session:
         """Create a new session with a fresh isolated workspace."""
         sid = session_id or str(uuid.uuid4())
+        workspace_root = workspace_root.expanduser().resolve()
         ws = workspace_root / sid
         ws.mkdir(parents=True, exist_ok=True)
         return cls(session_id=sid, messages=[], workspace_dir=ws)

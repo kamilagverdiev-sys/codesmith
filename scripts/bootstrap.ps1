@@ -5,7 +5,7 @@ param(
     [switch]$InstallDocker,
     [switch]$BuildSandbox,
     [switch]$PullModel,
-    [string]$Model = "qwen2.5-coder:7b"
+    [string]$Model = "qwen3-coder:30b"
 )
 
 Set-StrictMode -Version Latest
@@ -53,6 +53,23 @@ function Ensure-DockerBinOnPath() {
     }
 }
 
+function Ensure-OllamaBinOnPath() {
+    $ollamaBin = "C:\Users\DlgFresh\AppData\Local\Programs\Ollama"
+    if (-not (Test-Path $ollamaBin)) {
+        return
+    }
+
+    if (-not ($env:Path -split ";" | Where-Object { $_ -eq $ollamaBin })) {
+        $env:Path += ";$ollamaBin"
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not ($userPath -split ";" | Where-Object { $_ -eq $ollamaBin })) {
+        $newPath = (($userPath ?? "").TrimEnd(";") + ";$ollamaBin").Trim(";")
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    }
+}
+
 function Repair-EditableInstallPath() {
     $pth = ".\.venv\Lib\site-packages\_codesmith.pth"
     if (-not (Test-Path $pth)) {
@@ -79,6 +96,7 @@ if (-not (Test-Path $Python)) {
     throw "Python interpreter not found: $Python"
 }
 Ensure-DockerBinOnPath
+Ensure-OllamaBinOnPath
 
 Write-Step "Creating local virtual environment"
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
@@ -102,6 +120,7 @@ Ensure-UserDir (Join-Path $homeCodesmith "workspaces")
 if ($InstallOllama) {
     Write-Step "Installing Ollama"
     Install-WingetPackage "Ollama.Ollama"
+    Ensure-OllamaBinOnPath
 }
 
 if ($InstallDocker) {

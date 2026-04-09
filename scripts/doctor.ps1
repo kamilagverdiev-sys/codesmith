@@ -22,6 +22,20 @@ function Get-Check([string]$Name, [scriptblock]$Probe) {
     }
 }
 
+function Get-OllamaExecutable() {
+    $cmd = Get-Command ollama -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+
+    $fallback = "C:\Users\DlgFresh\AppData\Local\Programs\Ollama\ollama.exe"
+    if (Test-Path $fallback) {
+        return $fallback
+    }
+
+    throw "ollama executable not found"
+}
+
 $checks = @(
     (Get-Check "Git" { (Get-Command git -ErrorAction Stop).Source }),
     (Get-Check "uv" { (Get-Command uv -ErrorAction Stop).Source }),
@@ -44,7 +58,14 @@ $checks = @(
         $dockerCli = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
         & $dockerCli image inspect codesmith-sandbox:latest --format "{{.Id}}"
     }),
-    (Get-Check "Ollama" { (Get-Command ollama -ErrorAction Stop).Source }),
+    (Get-Check "Ollama" { Get-OllamaExecutable }),
+    (Get-Check "Ollama API" {
+        (Invoke-WebRequest -Uri "http://127.0.0.1:11434/api/tags" -UseBasicParsing).StatusCode
+    }),
+    (Get-Check "Ollama models" {
+        $payload = (Invoke-WebRequest -Uri "http://127.0.0.1:11434/api/tags" -UseBasicParsing).Content | ConvertFrom-Json
+        (($payload.models | ForEach-Object { $_.name }) -join ", ")
+    }),
     (Get-Check "ANTHROPIC_API_KEY" {
         if (-not $env:ANTHROPIC_API_KEY) { throw "not set" }
         "SET"

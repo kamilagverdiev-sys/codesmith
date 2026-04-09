@@ -24,7 +24,14 @@ llm_fallbacks:
     model: gpt-4o
   - provider: ollama
     model: qwen2.5-coder:7b
-    api_base: http://localhost:11434
+    api_base: http://127.0.0.1:11434
+
+# Optional profile used by the UI / CLI model picker.
+#   local-auto     -> prefer qwen3-coder:30b when installed, else qwen2.5-coder:7b
+#   local-quality  -> force qwen3-coder:30b first, then local/cloud fallbacks
+#   local-fast     -> force qwen2.5-coder:7b first
+#   config-default -> use the llm + llm_fallbacks block above exactly as-is
+default_model_profile: local-auto
 
 # ============================================================
 # Sandbox (Phase 1) — Docker execution
