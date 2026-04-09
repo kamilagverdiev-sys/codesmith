@@ -34,6 +34,244 @@
   }
   body { display: flex; flex-direction: column; height: 100vh; }
 
+  .app {
+    flex: 1 1 auto;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ---- Sidebar (session list) ---- */
+  .sidebar {
+    width: 260px;
+    flex: 0 0 260px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.18s ease, flex-basis 0.18s ease;
+  }
+  .sidebar.collapsed {
+    width: 0;
+    flex-basis: 0;
+    border-right-width: 0;
+  }
+  .sidebar-head {
+    flex: 0 0 auto;
+    padding: 12px 14px 8px 14px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sidebar-head input {
+    flex: 1;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .sidebar-head input:focus { border-color: var(--accent); }
+  .sidebar-head .new-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-weight: 600;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .sidebar-head .new-btn:hover { opacity: 0.88; }
+  .sidebar-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .sidebar-empty {
+    color: var(--fg-faint);
+    font-size: 11px;
+    padding: 18px 14px;
+    text-align: center;
+  }
+  .session-item {
+    padding: 9px 14px;
+    margin: 2px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.12s;
+    border: 1px solid transparent;
+  }
+  .session-item:hover { background: var(--bg-3); }
+  .session-item.active {
+    background: var(--bg-3);
+    border-color: var(--accent);
+  }
+  .session-item .title {
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .session-item .meta {
+    display: flex;
+    justify-content: space-between;
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-size: 10px;
+    margin-top: 4px;
+  }
+  .session-item .meta .profile { color: var(--tool); }
+  .sidebar-toggle {
+    position: fixed;
+    top: 60px;
+    left: 14px;
+    z-index: 20;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+  .sidebar.collapsed ~ .main-wrap .sidebar-toggle,
+  .sidebar.collapsed + .sidebar-toggle { display: flex; }
+  .sidebar-toggle:hover { color: var(--fg); border-color: var(--accent); }
+
+  .main-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---- Header extras ---- */
+  .fast-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .fast-mode input { accent-color: var(--yellow); }
+  .fast-mode.active { color: var(--yellow); }
+
+  .activity {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg-faint);
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .activity .num { color: var(--fg); font-weight: 500; }
+  .activity .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+  }
+  .activity.hot .dot { background: var(--green); box-shadow: 0 0 6px rgba(158,206,106,0.6); }
+
+  /* ---- Command palette ---- */
+  .palette-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    z-index: 30;
+    padding-top: 15vh;
+  }
+  .palette-backdrop.open { display: flex; }
+  .palette {
+    width: 520px;
+    max-width: 90vw;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    overflow: hidden;
+    max-height: 60vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .palette input {
+    background: var(--bg);
+    color: var(--fg);
+    border: none;
+    border-bottom: 1px solid var(--line);
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+  }
+  .palette-body {
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .palette-item {
+    padding: 9px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    color: var(--fg-dim);
+    font-size: 12px;
+  }
+  .palette-item .kind {
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .palette-item.focused,
+  .palette-item:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+  .palette-empty {
+    color: var(--fg-faint);
+    padding: 14px 16px;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  /* ---- Syntax highlighting (hand-rolled, no CDN) ---- */
+  .bubble .md pre code .k { color: #bb9af7; }     /* keyword */
+  .bubble .md pre code .s { color: #9ece6a; }     /* string */
+  .bubble .md pre code .c { color: #5c6773; font-style: italic; }  /* comment */
+  .bubble .md pre code .n { color: #e0af68; }     /* number */
+  .bubble .md pre code .t { color: #7dcfff; }     /* type */
+  .bubble .md pre code .f { color: #7aa2f7; }     /* function / builtin */
+
   header {
     display: flex;
     align-items: center;
@@ -110,7 +348,11 @@
   main {
     flex: 1 1 auto;
     overflow-y: auto;
-    padding: 24px max(20px, calc((100vw - 880px) / 2));
+    padding: 24px max(20px, calc((100% - 820px) / 2));
+    min-height: 0;
+  }
+  .main-wrap > footer {
+    flex: 0 0 auto;
   }
   .empty {
     color: var(--fg-faint);
@@ -523,6 +765,7 @@
 
 <header>
   <div class="brand">
+    <button id="sidebar-toggle-inline" class="sidebar-toggle-inline" title="Toggle session list" style="background:transparent;border:1px solid var(--line);color:var(--fg-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px;margin-right:4px;">☰</button>
     <span class="dot" id="status-dot" title="api status"></span>
     <span>codesmith</span>
     <span style="color: var(--fg-faint); font-weight: 400;">- hybrid coder agent</span>
@@ -531,6 +774,16 @@
     <span>loading...</span>
   </div>
   <div class="controls">
+    <div class="activity" id="activity" title="Runs today · avg duration of last 5">
+      <span class="dot"></span>
+      <span><span class="num" id="activity-count">0</span> runs</span>
+      <span>·</span>
+      <span class="num" id="activity-avg">—</span>
+    </div>
+    <label class="fast-mode" id="fast-mode-label" title="Force the fast local profile (Qwen 2.5 Coder 7B) on top of whatever is selected">
+      <input type="checkbox" id="fast-mode" />
+      <span>fast</span>
+    </label>
     <label class="toggle" title="Show internal tool steps and debug trace">
       <input type="checkbox" id="debug-steps" />
       <span>debug</span>
@@ -545,17 +798,44 @@
   </div>
 </header>
 
-<main id="chat">
-  <div class="empty" id="empty">
-    <h1>codesmith</h1>
-    <div>Ask for code, debugging, or a quick explanation and the agent will handle the rest.</div>
-    <div class="examples">
-      <button data-prompt="Write a Fibonacci function in Python and verify it for n=10.">fib(10)</button>
-      <button data-prompt="Create hello.py with print('hi') and run it.">create + run hello.py</button>
-      <button data-prompt="How many prime numbers are between 1 and 1000? Count them in the sandbox.">primes <= 1000</button>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <input type="search" id="sidebar-search" placeholder="filter sessions..." />
+      <button class="new-btn" id="sidebar-new" title="Start a fresh session">+ new</button>
     </div>
+    <div class="sidebar-body" id="sidebar-body">
+      <div class="sidebar-empty">loading…</div>
+    </div>
+  </aside>
+
+  <div class="main-wrap">
+    <main id="chat">
+      <div class="empty" id="empty">
+        <h1>codesmith</h1>
+        <div>Ask for code, debugging, or a quick explanation and the agent will handle the rest.</div>
+        <div class="examples">
+          <button data-prompt="Write a Fibonacci function in Python and verify it for n=10.">fib(10)</button>
+          <button data-prompt="Create hello.py with print('hi') and run it.">create + run hello.py</button>
+          <button data-prompt="How many prime numbers are between 1 and 1000? Count them in the sandbox.">primes <= 1000</button>
+          <button data-prompt="Show me the workspace tree, then grep for all TODO comments.">explore the workspace</button>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <div class="input-row">
+        <textarea
+          id="input"
+          placeholder="Type a message... (Ctrl+Enter to send)"
+          rows="2"
+        ></textarea>
+        <button class="send" id="send">Send</button>
+      </div>
+      <div class="hint">Ctrl+Enter - send · Esc - cancel · Ctrl+K - palette · sandbox: docker, network=none</div>
+    </footer>
   </div>
-</main>
+</div>
 
 <aside class="runs-panel" id="runs-panel">
   <div class="runs-head">
@@ -567,17 +847,12 @@
   </div>
 </aside>
 
-<footer>
-  <div class="input-row">
-    <textarea
-      id="input"
-      placeholder="Type a message... (Ctrl+Enter to send)"
-      rows="2"
-    ></textarea>
-    <button class="send" id="send">Send</button>
+<div class="palette-backdrop" id="palette-backdrop">
+  <div class="palette">
+    <input type="text" id="palette-input" placeholder="Search profiles, sessions, commands..." autocomplete="off" />
+    <div class="palette-body" id="palette-body"></div>
   </div>
-  <div class="hint">Ctrl+Enter - send · Esc - cancel · sandbox: docker, network=none</div>
-</footer>
+</div>
 
 <script>
 const $ = (sel) => document.querySelector(sel);
@@ -594,15 +869,35 @@ const debugStepsEl = $('#debug-steps');
 const runsPanelEl = $('#runs-panel');
 const runsBodyEl = $('#runs-body');
 const runsRefreshBtn = $('#runs-refresh');
+const sidebarEl = $('#sidebar');
+const sidebarBodyEl = $('#sidebar-body');
+const sidebarSearchEl = $('#sidebar-search');
+const sidebarNewBtn = $('#sidebar-new');
+const sidebarToggleBtn = $('#sidebar-toggle-inline');
+const fastModeEl = $('#fast-mode');
+const fastModeLabelEl = $('#fast-mode-label');
+const activityEl = $('#activity');
+const activityCountEl = $('#activity-count');
+const activityAvgEl = $('#activity-avg');
+const paletteBackdropEl = $('#palette-backdrop');
+const paletteInputEl = $('#palette-input');
+const paletteBodyEl = $('#palette-body');
 
 let sessionId = null;
 let inflight = null; // { abort: () => void }
 let currentProfileKey = null;
 let modelProfiles = [];
+let sessionList = [];
+let sessionListFilter = '';
+let runStats = { count: 0, avgMs: null, last: 0 };
+let paletteFocus = 0;
+let paletteItems = [];
 
 const DEBUG_STORAGE_KEY = 'codesmith.debugSteps';
 const PROFILE_STORAGE_KEY = 'codesmith.modelProfile';
 const SESSION_STORAGE_KEY = 'codesmith.sessionId';
+const FAST_MODE_STORAGE_KEY = 'codesmith.fastMode';
+const SIDEBAR_STORAGE_KEY = 'codesmith.sidebarHidden';
 
 // ---- helpers ----
 function el(tag, attrs = {}, ...children) {
@@ -670,7 +965,13 @@ function renderMarkdownInto(container, text) {
         pre.appendChild(tag);
       }
       const codeEl = document.createElement('code');
-      codeEl.textContent = part.body.replace(/\n$/, '');
+      const body = part.body.replace(/\n$/, '');
+      const highlighted = highlightCode(part.lang, body);
+      if (highlighted) {
+        codeEl.appendChild(highlighted);
+      } else {
+        codeEl.textContent = body;
+      }
       pre.appendChild(codeEl);
       container.appendChild(pre);
       continue;
@@ -752,17 +1053,322 @@ function appendInline(parent, text) {
   }
 }
 
-async function refreshRunsPanel() {
-  if (!runsBodyEl) return;
-  if (!debugStepsEnabled()) return;
+// ---- Fast mode (force local-fast override) ----
+function fastModeActive() {
+  return !!(fastModeEl && fastModeEl.checked);
+}
+function currentEffectiveProfile() {
+  // Fast mode wins over the selected profile: if the user ticked it,
+  // every new turn goes through local-fast regardless of the <select>.
+  if (fastModeActive()) return 'local-fast';
+  return currentModelProfile();
+}
+
+// ---- Activity counter (runs today + avg duration of last 5) ----
+function updateActivityCounter(runs) {
+  if (!activityEl || !activityCountEl || !activityAvgEl) return;
+  const today = new Date();
+  const ymd = today.toISOString().slice(0, 10);
+  let todayCount = 0;
+  const durations = [];
+  for (const r of runs || []) {
+    if ((r.ts || '').slice(0, 10) === ymd) todayCount++;
+    if (typeof r.duration_ms === 'number' && r.duration_ms > 0) {
+      durations.push(r.duration_ms);
+    }
+    if (durations.length >= 5) break;
+  }
+  activityCountEl.textContent = String(todayCount);
+  if (durations.length === 0) {
+    activityAvgEl.textContent = '—';
+  } else {
+    const avg = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
+    activityAvgEl.textContent = (avg >= 1000 ? (avg / 1000).toFixed(1) + 's' : avg + 'ms') + ' avg';
+  }
+  runStats = { count: todayCount, avgMs: durations.length ? durations[0] : null, last: Date.now() };
+  if (todayCount > 0 && Date.now() - (runStats.last || 0) < 60000) {
+    activityEl.classList.add('hot');
+  }
+}
+
+// ---- Sidebar (session list) ----
+function relativeTime(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '';
+  const delta = (Date.now() - t) / 1000;
+  if (delta < 60) return 'just now';
+  if (delta < 3600) return Math.round(delta / 60) + 'm';
+  if (delta < 86400) return Math.round(delta / 3600) + 'h';
+  return Math.round(delta / 86400) + 'd';
+}
+
+async function loadSessionList() {
+  if (!sidebarBodyEl) return;
+  try {
+    const r = await fetch('/api/sessions?limit=50');
+    if (!r.ok) throw new Error('sessions fetch failed: ' + r.status);
+    sessionList = await r.json();
+  } catch (e) {
+    sidebarBodyEl.innerHTML = '';
+    sidebarBodyEl.appendChild(el('div', { class: 'sidebar-empty', text: 'failed to load: ' + e.message }));
+    return;
+  }
+  renderSessionList();
+}
+
+function renderSessionList() {
+  if (!sidebarBodyEl) return;
+  sidebarBodyEl.innerHTML = '';
+  const filter = (sessionListFilter || '').toLowerCase().trim();
+  const visible = filter
+    ? sessionList.filter(s =>
+        (s.title || '').toLowerCase().includes(filter) ||
+        (s.model_profile || '').toLowerCase().includes(filter) ||
+        (s.session_id || '').toLowerCase().includes(filter))
+    : sessionList;
+  if (visible.length === 0) {
+    sidebarBodyEl.appendChild(el('div', {
+      class: 'sidebar-empty',
+      text: filter ? 'no matches' : '(no sessions yet — start chatting)',
+    }));
+    return;
+  }
+  for (const s of visible) {
+    const item = el('div', { class: 'session-item' + (s.session_id === sessionId ? ' active' : '') });
+    item.appendChild(el('div', { class: 'title', text: s.title || s.session_id }));
+    const meta = el('div', { class: 'meta' });
+    meta.appendChild(el('span', { class: 'profile', text: s.model_profile || '—' }));
+    meta.appendChild(el('span', { text: relativeTime(s.updated_at) + ' · ' + (s.messages || 0) + 'm' }));
+    item.appendChild(meta);
+    item.addEventListener('click', () => switchSession(s.session_id));
+    sidebarBodyEl.appendChild(item);
+  }
+}
+
+async function switchSession(targetId) {
+  if (!targetId || targetId === sessionId) return;
+  if (inflight) await abortInflight();
+  sessionId = targetId;
+  localStorage.setItem(SESSION_STORAGE_KEY, targetId);
+  chatEl.innerHTML = '';
+  // Fetch and render history.
+  try {
+    const r = await fetch('/api/sessions/' + targetId + '/messages');
+    if (!r.ok) throw new Error('history fetch failed: ' + r.status);
+    const payload = await r.json();
+    if (payload.model_profile && modelProfileEl) {
+      const option = Array.from(modelProfileEl.options).find(o => o.value === payload.model_profile);
+      if (option) {
+        modelProfileEl.value = payload.model_profile;
+        currentProfileKey = payload.model_profile;
+        updateModelStatus();
+      }
+    }
+    renderHistory(payload.messages || []);
+  } catch (e) {
+    showError('Failed to load session: ' + e.message);
+  }
+  renderSessionList();
+}
+
+function toggleSidebar() {
+  if (!sidebarEl) return;
+  sidebarEl.classList.toggle('collapsed');
+  localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarEl.classList.contains('collapsed') ? 'true' : 'false');
+}
+
+// ---- Command palette (Ctrl+K) ----
+function buildPaletteItems() {
+  const items = [];
+  for (const p of modelProfiles || []) {
+    items.push({
+      kind: 'profile',
+      label: p.label + ' — ' + p.primary_model,
+      hint: p.available ? 'ready' : 'needs setup',
+      action: () => {
+        if (modelProfileEl) {
+          modelProfileEl.value = p.key;
+          modelProfileEl.dispatchEvent(new Event('change'));
+        }
+      },
+    });
+  }
+  for (const s of sessionList.slice(0, 15)) {
+    items.push({
+      kind: 'session',
+      label: s.title || s.session_id,
+      hint: relativeTime(s.updated_at),
+      action: () => switchSession(s.session_id),
+    });
+  }
+  items.push({
+    kind: 'command',
+    label: 'New session',
+    hint: 'drop current',
+    action: async () => {
+      if (inflight) await abortInflight();
+      await dropSession();
+      chatEl.innerHTML = '';
+      chatEl.appendChild(emptyEl);
+      inputEl.focus();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: fastModeActive() ? 'Disable fast mode' : 'Enable fast mode',
+    hint: 'local-fast override',
+    action: () => {
+      if (!fastModeEl) return;
+      fastModeEl.checked = !fastModeEl.checked;
+      fastModeEl.dispatchEvent(new Event('change'));
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: debugStepsEnabled() ? 'Hide debug panel' : 'Show debug panel',
+    hint: 'step trace + runs',
+    action: () => {
+      if (!debugStepsEl) return;
+      debugStepsEl.checked = !debugStepsEl.checked;
+      debugStepsEl.dispatchEvent(new Event('change'));
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Toggle sidebar',
+    hint: 'show / hide session list',
+    action: () => toggleSidebar(),
+  });
+  return items;
+}
+
+function openPalette() {
+  if (!paletteBackdropEl) return;
+  paletteItems = buildPaletteItems();
+  paletteFocus = 0;
+  paletteInputEl.value = '';
+  renderPalette('');
+  paletteBackdropEl.classList.add('open');
+  setTimeout(() => paletteInputEl.focus(), 10);
+}
+
+function closePalette() {
+  if (!paletteBackdropEl) return;
+  paletteBackdropEl.classList.remove('open');
+  inputEl.focus();
+}
+
+function renderPalette(filter) {
+  if (!paletteBodyEl) return;
+  const q = (filter || '').toLowerCase().trim();
+  const filtered = q
+    ? paletteItems.filter(i => i.label.toLowerCase().includes(q) || (i.hint || '').toLowerCase().includes(q))
+    : paletteItems;
+  paletteBodyEl.innerHTML = '';
+  if (filtered.length === 0) {
+    paletteBodyEl.appendChild(el('div', { class: 'palette-empty', text: 'no matches' }));
+    return;
+  }
+  paletteFocus = Math.min(paletteFocus, filtered.length - 1);
+  filtered.forEach((item, idx) => {
+    const row = el('div', { class: 'palette-item' + (idx === paletteFocus ? ' focused' : '') });
+    row.appendChild(el('span', { text: item.label }));
+    row.appendChild(el('span', { class: 'kind', text: item.kind + '  ·  ' + (item.hint || '') }));
+    row.addEventListener('click', () => {
+      closePalette();
+      item.action();
+    });
+    row.addEventListener('mouseenter', () => {
+      paletteFocus = idx;
+      renderPalette(paletteInputEl.value);
+    });
+    paletteBodyEl.appendChild(row);
+  });
+  paletteBodyEl._filtered = filtered;
+}
+
+function executePaletteFocused() {
+  const filtered = paletteBodyEl && paletteBodyEl._filtered;
+  if (!filtered || filtered.length === 0) return;
+  const item = filtered[Math.max(0, Math.min(paletteFocus, filtered.length - 1))];
+  if (!item) return;
+  closePalette();
+  item.action();
+}
+
+// ---- Naive syntax highlighter (no CDN) ----
+const _PY_KEYWORDS = new Set(('False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield').split(' '));
+const _JS_KEYWORDS = new Set(('await break case catch class const continue debugger default delete do else enum export extends false finally for from function if import in instanceof let new null of return static super switch this throw true try typeof var void while with yield async').split(' '));
+const _SH_KEYWORDS = new Set(('if then else elif fi for while do done case esac in function return export local read set unset source echo cd mkdir rm cp mv ls cat grep').split(' '));
+
+function highlightCode(lang, source) {
+  const language = (lang || '').toLowerCase();
+  const isPy = language === 'py' || language === 'python';
+  const isJs = language === 'js' || language === 'javascript' || language === 'ts' || language === 'typescript' || language === 'tsx' || language === 'jsx';
+  const isSh = language === 'sh' || language === 'bash' || language === 'shell' || language === 'zsh';
+  const isJson = language === 'json';
+  if (!isPy && !isJs && !isSh && !isJson) return null;
+
+  const frag = document.createDocumentFragment();
+  const kws = isPy ? _PY_KEYWORDS : (isJs ? _JS_KEYWORDS : (isSh ? _SH_KEYWORDS : null));
+
+  // Token regex: comments / strings / numbers / identifiers / whitespace / anything-else
+  const re = /(#[^\n]*|\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|([\s\S])/g;
+  let m;
+  while ((m = re.exec(source)) !== null) {
+    const [, comment, str, num, ident, ws, other] = m;
+    if (comment !== undefined) {
+      frag.appendChild(makeSpan('c', comment));
+    } else if (str !== undefined) {
+      frag.appendChild(makeSpan('s', str));
+    } else if (num !== undefined) {
+      frag.appendChild(makeSpan('n', num));
+    } else if (ident !== undefined) {
+      if (kws && kws.has(ident)) {
+        frag.appendChild(makeSpan('k', ident));
+      } else if (isPy && /^(print|len|range|open|int|str|float|bool|list|dict|set|tuple)$/.test(ident)) {
+        frag.appendChild(makeSpan('f', ident));
+      } else if (isJs && /^(console|Math|JSON|Object|Array|Promise|Date|Number|String)$/.test(ident)) {
+        frag.appendChild(makeSpan('t', ident));
+      } else {
+        frag.appendChild(document.createTextNode(ident));
+      }
+    } else if (ws !== undefined) {
+      frag.appendChild(document.createTextNode(ws));
+    } else {
+      frag.appendChild(document.createTextNode(other));
+    }
+  }
+  return frag;
+}
+
+function makeSpan(cls, text) {
+  const s = document.createElement('span');
+  s.className = cls;
+  s.textContent = text;
+  return s;
+}
+
+async function refreshRunsPanel(forceActivityOnly = false) {
+  // Always refresh the activity counter in the header (cheap call).
   try {
     const r = await fetch('/api/runs?limit=20');
-    if (!r.ok) throw new Error('runs fetch failed: ' + r.status);
-    const payload = await r.json();
-    renderRuns(payload.runs || []);
+    if (r.ok) {
+      const payload = await r.json();
+      updateActivityCounter(payload.runs || []);
+      if (debugStepsEnabled() && !forceActivityOnly) {
+        renderRuns(payload.runs || []);
+      }
+      return;
+    }
+    if (!debugStepsEnabled()) return;
+    throw new Error('runs fetch failed: ' + r.status);
   } catch (e) {
-    runsBodyEl.innerHTML = '';
-    runsBodyEl.appendChild(el('div', { class: 'runs-empty', text: 'failed to load: ' + e.message }));
+    if (runsBodyEl && debugStepsEnabled()) {
+      runsBodyEl.innerHTML = '';
+      runsBodyEl.appendChild(el('div', { class: 'runs-empty', text: 'failed to load: ' + e.message }));
+    }
   }
 }
 
@@ -893,7 +1499,7 @@ async function ensureSession() {
   const r = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model_profile: currentModelProfile() }),
+    body: JSON.stringify({ model_profile: currentEffectiveProfile() }),
   });
   if (!r.ok) throw new Error('failed to create session');
   const data = await r.json();
@@ -1073,7 +1679,7 @@ async function send() {
     resp = await fetch('/api/sessions/' + sessionId + '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-      body: JSON.stringify({ message, model_profile: currentModelProfile() }),
+      body: JSON.stringify({ message, model_profile: currentEffectiveProfile() }),
       signal: controller.signal,
     });
   } catch (e) {
@@ -1228,6 +1834,7 @@ function handleEvent(ev, ctx) {
       ctx.statsEl.appendChild(el('span', { class: 'warn', text: 'warning: hit iteration limit' }));
     }
     refreshRunsPanel();
+    loadSessionList();
     return;
   }
 
@@ -1235,6 +1842,7 @@ function handleEvent(ev, ctx) {
     ctx.typingEl.remove();
     showError(ev.data.error || 'unknown error', ctx.assistantTurn, ev.data.details);
     refreshRunsPanel();
+    loadSessionList();
     return;
   }
 }
@@ -1268,6 +1876,94 @@ inputEl.addEventListener('keydown', (e) => {
     abortInflight();
   }
 });
+
+// ---- global hotkeys: Ctrl+K opens the command palette ----
+document.addEventListener('keydown', (e) => {
+  const paletteOpen = paletteBackdropEl && paletteBackdropEl.classList.contains('open');
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (paletteOpen) {
+      closePalette();
+    } else {
+      openPalette();
+    }
+    return;
+  }
+  if (!paletteOpen) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closePalette();
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    const filtered = paletteBodyEl && paletteBodyEl._filtered;
+    if (filtered && filtered.length > 0) {
+      paletteFocus = (paletteFocus + 1) % filtered.length;
+      renderPalette(paletteInputEl.value);
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    const filtered = paletteBodyEl && paletteBodyEl._filtered;
+    if (filtered && filtered.length > 0) {
+      paletteFocus = (paletteFocus - 1 + filtered.length) % filtered.length;
+      renderPalette(paletteInputEl.value);
+    }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    executePaletteFocused();
+  }
+});
+if (paletteInputEl) {
+  paletteInputEl.addEventListener('input', () => {
+    paletteFocus = 0;
+    renderPalette(paletteInputEl.value);
+  });
+}
+if (paletteBackdropEl) {
+  paletteBackdropEl.addEventListener('click', (e) => {
+    if (e.target === paletteBackdropEl) closePalette();
+  });
+}
+
+// ---- sidebar ----
+if (sidebarSearchEl) {
+  sidebarSearchEl.addEventListener('input', () => {
+    sessionListFilter = sidebarSearchEl.value;
+    renderSessionList();
+  });
+}
+if (sidebarNewBtn) {
+  sidebarNewBtn.addEventListener('click', async () => {
+    if (inflight) await abortInflight();
+    await dropSession();
+    chatEl.innerHTML = '';
+    chatEl.appendChild(emptyEl);
+    loadSessionList();
+    inputEl.focus();
+  });
+}
+if (sidebarToggleBtn) {
+  sidebarToggleBtn.addEventListener('click', () => toggleSidebar());
+}
+if (localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true' && sidebarEl) {
+  sidebarEl.classList.add('collapsed');
+}
+
+// ---- fast mode tumbler ----
+if (fastModeEl) {
+  fastModeEl.checked = localStorage.getItem(FAST_MODE_STORAGE_KEY) === 'true';
+  if (fastModeEl.checked && fastModeLabelEl) fastModeLabelEl.classList.add('active');
+  fastModeEl.addEventListener('change', () => {
+    localStorage.setItem(FAST_MODE_STORAGE_KEY, fastModeEl.checked ? 'true' : 'false');
+    if (fastModeLabelEl) fastModeLabelEl.classList.toggle('active', fastModeEl.checked);
+    if (modelStatusEl) {
+      if (fastModeEl.checked) {
+        modelStatusEl.textContent = 'fast: local-fast (override)';
+      } else {
+        updateModelStatus();
+      }
+    }
+  });
+}
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
@@ -1310,8 +2006,13 @@ document.addEventListener('click', (e) => {
 loadInfo();
 (async () => {
   await loadModels();
+  await loadSessionList();
   await restoreSession();
+  refreshRunsPanel(true);
 })();
+// Refresh activity counter every 30s while idle so it stays honest
+// even if the user is reading, not typing.
+setInterval(() => refreshRunsPanel(true), 30000);
 inputEl.focus();
 </script>
 </body>

@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from codesmith import __version__
-from codesmith.agent import Agent, AgentStep
+from codesmith.agent import DEFAULT_SYSTEM_PROMPT, Agent, AgentStep
 from codesmith.config import Config, load_config
 from codesmith.llm import LLMError, LLMRouter
 from codesmith.model_selection import (
@@ -57,6 +57,7 @@ from codesmith.session_store import (
 from codesmith.tools.filesystem import default_filesystem_tools
 from codesmith.tools.registry import ToolRegistry
 from codesmith.tools.sandbox import SandboxTool
+from codesmith.workspace_snapshot import bootstrap_system_prompt_addition
 
 log = logging.getLogger(__name__)
 
@@ -530,6 +531,16 @@ async def chat(
     except UnknownModelProfileError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     session.metadata["model_profile"] = resolved_profile.key
+
+    # Bootstrap: on the very first user turn, inject a short workspace
+    # snapshot into the system prompt so the agent doesn't burn its
+    # iteration budget on list_directory calls just to orient itself.
+    is_first_turn = not any(m.get("role") == "user" for m in session.messages)
+    if is_first_turn:
+        snapshot_block = bootstrap_system_prompt_addition(session.workspace_dir)
+        if snapshot_block:
+            session.add_system(DEFAULT_SYSTEM_PROMPT + "\n\n" + snapshot_block)
+
     session.add_user(payload.message)
 
     agent = state.make_agent(resolved_profile.key)
