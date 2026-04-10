@@ -767,6 +767,77 @@
   }
   .plan-btn:hover { background: rgba(187,154,247,0.1); }
   .plan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .solve-btn {
+    background: transparent;
+    color: var(--green);
+    border: 1px solid var(--green);
+    padding: 0 16px;
+    height: 44px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    flex: 0 0 auto;
+    transition: all 0.15s;
+  }
+  .solve-btn:hover { background: rgba(158,206,106,0.1); }
+  .solve-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .review-btn {
+    background: transparent;
+    color: var(--yellow);
+    border: 1px solid var(--yellow);
+    padding: 0 16px;
+    height: 44px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    flex: 0 0 auto;
+    transition: all 0.15s;
+  }
+  .review-btn:hover { background: rgba(224,175,104,0.1); }
+  .review-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ---- Review verdict card ---- */
+  .review-card {
+    background: linear-gradient(180deg, rgba(224,175,104,0.08), rgba(224,175,104,0.02));
+    border: 1px solid rgba(224,175,104,0.35);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 28px;
+  }
+  .review-card.verdict-approve { border-color: rgba(158,206,106,0.5); background: linear-gradient(180deg, rgba(158,206,106,0.08), rgba(158,206,106,0.02)); }
+  .review-card.verdict-request-changes { border-color: rgba(247,118,142,0.5); background: linear-gradient(180deg, rgba(247,118,142,0.08), rgba(247,118,142,0.02)); }
+  .review-card .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .review-card .head .verdict {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .review-card .head .verdict.approve { background: rgba(158,206,106,0.2); color: var(--green); }
+  .review-card .head .verdict.nits { background: rgba(224,175,104,0.2); color: var(--yellow); }
+  .review-card .head .verdict.changes { background: rgba(247,118,142,0.2); color: var(--red); }
+  .review-card .head .verdict.unknown { background: rgba(139,152,168,0.2); color: var(--fg-dim); }
+  .review-card .head .meta {
+    color: var(--fg-faint);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 10px;
+  }
+  .review-card .body {
+    color: var(--fg);
+    line-height: 1.55;
+  }
 
   /* ---- Architect plan card ---- */
   .plan-card {
@@ -1008,9 +1079,11 @@
           rows="2"
         ></textarea>
         <button class="plan-btn" id="plan" title="Ask the architect persona to produce an executable plan without touching files">Plan</button>
+        <button class="review-btn" id="review" title="Review last changes using the REVIEWER persona — paste a diff or auto-use pending changes">Review</button>
+        <button class="solve-btn" id="solve" title="Run with self-repair loop — retries on failure until the code works">Solve</button>
         <button class="send" id="send">Send</button>
       </div>
-      <div class="hint">Ctrl+Enter - send · Ctrl+Shift+Enter - plan · Esc - cancel · Ctrl+K - palette · sandbox: docker, network=none</div>
+      <div class="hint">Ctrl+Enter - send · Ctrl+Shift+Enter - plan · Ctrl+Shift+S - solve · Ctrl+Shift+R - review · Esc - cancel · Ctrl+K - palette</div>
     </footer>
   </div>
 </div>
@@ -1039,6 +1112,8 @@ const emptyEl = $('#empty');
 const inputEl = $('#input');
 const sendBtn = $('#send');
 const planBtn = $('#plan');
+const solveBtn = $('#solve');
+const reviewBtn = $('#review');
 const statusDot = $('#status-dot');
 const metaEl = $('#meta');
 const newSessionBtn = $('#new-session');
@@ -1413,6 +1488,30 @@ function buildPaletteItems() {
         return;
       }
       runPlan();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Solver: self-repair current input',
+    hint: 'ctrl+shift+s',
+    action: () => {
+      if (!inputEl.value.trim()) {
+        inputEl.focus();
+        return;
+      }
+      runSolve();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Reviewer: review diff in input',
+    hint: 'ctrl+shift+r',
+    action: () => {
+      if (!inputEl.value.trim()) {
+        inputEl.focus();
+        return;
+      }
+      runReview();
     },
   });
   items.push({
@@ -2147,6 +2246,266 @@ async function executePlan(planText) {
   }
 }
 
+// ---- Solve (self-repair loop) flow ----
+async function runSolve() {
+  const task = inputEl.value.trim();
+  if (!task) return;
+  if (inflight) return;
+
+  clearEmpty();
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  solveBtn.disabled = true;
+  sendBtn.disabled = true;
+  planBtn.disabled = true;
+  reviewBtn.disabled = true;
+
+  try {
+    await ensureSession();
+  } catch (e) {
+    showError('Failed to create session: ' + e.message);
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    return;
+  }
+
+  // Render user turn.
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → solver' }),
+      el('div', { class: 'bubble', text: task }),
+    )
+  );
+
+  // Shell for the solver response.
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / solver' }),
+  );
+  const stepsContainer = el('div', { class: 'steps' });
+  const typingEl = el('div', { class: 'typing', text: 'solver working (self-repair loop)' });
+  assistantTurn.appendChild(typingEl);
+  assistantTurn.appendChild(stepsContainer);
+  const finalBubble = el('div', { class: 'bubble', style: 'display: none;' });
+  assistantTurn.appendChild(finalBubble);
+  const statsEl = el('div', { class: 'stats', style: 'display: none;' });
+  assistantTurn.appendChild(statsEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  const controller = new AbortController();
+  inflight = { abort: () => controller.abort() };
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/solve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({ task, max_attempts: 5, model_profile: currentEffectiveProfile() }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Solve request failed: ' + e.message, assistantTurn);
+    inflight = null;
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    return;
+  }
+
+  if (!resp.ok || !resp.body) {
+    typingEl.remove();
+    let detail = resp.statusText;
+    try { const b = await resp.json(); if (b && b.detail) detail = b.detail; } catch {}
+    showError('Solve failed (' + resp.status + '): ' + detail, assistantTurn);
+    inflight = null;
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let sawTerminalEvent = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      buf = normalizeSSEBuffer(buf);
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const event = parseSSE(raw);
+        if (!event) continue;
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    buf += decoder.decode();
+    buf = normalizeSSEBuffer(buf);
+    if (buf.trim()) {
+      const event = parseSSE(buf);
+      if (event) {
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    if (!sawTerminalEvent) {
+      showError('Stream ended before a final answer arrived.', assistantTurn);
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      showError('Solve stream failed: ' + e.message, assistantTurn);
+    }
+  } finally {
+    typingEl.remove();
+    inflight = null;
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+// ---- Review flow ----
+async function runReview() {
+  const diff = inputEl.value.trim();
+  if (!diff) return;
+  if (inflight) return;
+
+  clearEmpty();
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  reviewBtn.disabled = true;
+  planBtn.disabled = true;
+  sendBtn.disabled = true;
+  solveBtn.disabled = true;
+
+  try {
+    await ensureSession();
+  } catch (e) {
+    showError('Failed to create session: ' + e.message);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  // Render user turn.
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → reviewer' }),
+      el('div', { class: 'bubble', text: diff.length > 400 ? diff.slice(0, 400) + '...' : diff }),
+    )
+  );
+
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / reviewer' }),
+  );
+  const typingEl = el('div', { class: 'typing', text: 'reviewer analyzing diff' });
+  assistantTurn.appendChild(typingEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ diff, model_profile: currentEffectiveProfile() }),
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Review request failed: ' + e.message, assistantTurn);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  typingEl.remove();
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try { const body = await resp.json(); if (body && body.detail) detail = body.detail; } catch {}
+    showError('Review failed (' + resp.status + '): ' + detail, assistantTurn);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    showError('Review parse failed: ' + e.message, assistantTurn);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  renderReviewCard(assistantTurn, data);
+  refreshRunsPanel();
+  loadSessionList();
+  reviewBtn.disabled = false;
+  planBtn.disabled = false;
+  sendBtn.disabled = false;
+  solveBtn.disabled = false;
+  inputEl.focus();
+}
+
+function renderReviewCard(parent, data) {
+  const verdict = (data.verdict || 'UNKNOWN').toUpperCase();
+  let cardClass = 'review-card';
+  if (verdict === 'APPROVE') cardClass += ' verdict-approve';
+  else if (verdict === 'REQUEST CHANGES') cardClass += ' verdict-request-changes';
+
+  const card = el('div', { class: cardClass });
+
+  const head = el('div', { class: 'head' });
+  head.appendChild(el('span', { text: 'code review', style: 'color: var(--yellow);' }));
+
+  let verdictCls = 'verdict unknown';
+  if (verdict === 'APPROVE') verdictCls = 'verdict approve';
+  else if (verdict === 'APPROVE WITH NITS') verdictCls = 'verdict nits';
+  else if (verdict === 'REQUEST CHANGES') verdictCls = 'verdict changes';
+  head.appendChild(el('span', { class: verdictCls, text: verdict }));
+  card.appendChild(head);
+
+  const metaLine = el('div', { class: 'head' });
+  metaLine.appendChild(el('span', {
+    class: 'meta',
+    text: (data.provider || '') + '/' + (data.model || '') +
+          '  ·  ' + (data.steps || 0) + ' step · ' +
+          (data.tokens || 0) + ' tok · ' +
+          (data.duration_ms || 0) + 'ms',
+  }));
+  card.appendChild(metaLine);
+
+  const body = el('div', { class: 'body' });
+  renderMarkdownInto(body, data.review_text || '(empty review)');
+  card.appendChild(body);
+
+  parent.appendChild(card);
+  scrollToBottom();
+}
+
 function renderPlanCard(parent, data) {
   const card = el('div', { class: 'plan-card' });
 
@@ -2387,6 +2746,15 @@ function handleEvent(ev, ctx) {
     if (d.compacted > 0) {
       ctx.statsEl.appendChild(el('span', { text: 'compacted ' + d.compacted + ' msgs' }));
     }
+    if (typeof d.attempts === 'number' && d.attempts > 0) {
+      ctx.statsEl.appendChild(el('span', { text: 'attempts: ' + d.attempts }));
+    }
+    if (typeof d.solved === 'boolean') {
+      ctx.statsEl.appendChild(el('span', {
+        class: d.solved ? '' : 'warn',
+        text: d.solved ? 'solved ✓' : 'not solved ✗',
+      }));
+    }
     if (d.forced_final) {
       ctx.statsEl.appendChild(el('span', { class: 'warn', text: 'forced final (guardrail)' }));
     }
@@ -2440,12 +2808,28 @@ inputEl.addEventListener('keydown', (e) => {
       send();
     }
   }
+  // Ctrl+Shift+S — solve
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    runSolve();
+  }
+  // Ctrl+Shift+R — review
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
+    e.preventDefault();
+    runReview();
+  }
   if (e.key === 'Escape' && inflight) {
     abortInflight();
   }
 });
 if (planBtn) {
   planBtn.addEventListener('click', runPlan);
+}
+if (solveBtn) {
+  solveBtn.addEventListener('click', runSolve);
+}
+if (reviewBtn) {
+  reviewBtn.addEventListener('click', runReview);
 }
 
 // ---- global hotkeys: Ctrl+K opens the command palette ----

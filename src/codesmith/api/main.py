@@ -42,6 +42,7 @@ from codesmith import __version__
 from codesmith.agent import DEFAULT_SYSTEM_PROMPT, Agent, AgentStep
 from codesmith.config import Config, load_config
 from codesmith.llm import LLMError, LLMRouter
+from codesmith.loops.self_repair import SelfRepairLoop
 from codesmith.model_selection import (
     UnknownModelProfileError,
     default_model_profile_key,
@@ -57,7 +58,7 @@ from codesmith.pending_changes import (
     set_auto_approve,
 )
 from codesmith.pending_changes import list_pending as list_pending_changes
-from codesmith.personas import ARCHITECT, CODER, Persona, list_personas
+from codesmith.personas import ARCHITECT, CODER, REVIEWER, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
 from codesmith.session_store import (
@@ -67,6 +68,7 @@ from codesmith.session_store import (
 from codesmith.tools.filesystem import default_filesystem_tools
 from codesmith.tools.registry import ToolRegistry
 from codesmith.tools.sandbox import SandboxTool
+from codesmith.tools.web_search import WebSearchTool
 from codesmith.workspace_snapshot import bootstrap_system_prompt_addition
 
 log = logging.getLogger(__name__)
@@ -96,6 +98,8 @@ class AppState:
         if config.tools.filesystem.enabled:
             for t in default_filesystem_tools():
                 self.registry.register(t)
+        if config.tools.web_search.enabled:
+            self.registry.register(WebSearchTool(config.tools.web_search))
 
         workspace_root = config.tools.filesystem.workspace_root
         if config.sessions.backend == "sqlite":
@@ -368,6 +372,29 @@ class ExecutePlanRequest(BaseModel):
     plan_text: str | None = None
     model_profile: str | None = None
     max_iterations: int | None = Field(default=None, ge=1, le=50)
+
+
+class ReviewRequest(BaseModel):
+    diff: str = Field(..., min_length=1)
+    model_profile: str | None = None
+
+
+class ReviewResponse(BaseModel):
+    session_id: str
+    persona: str
+    provider: str
+    model: str
+    review_text: str
+    verdict: str
+    steps: int
+    tokens: int
+    duration_ms: int
+
+
+class SolveRequest(BaseModel):
+    task: str = Field(..., min_length=1)
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    model_profile: str | None = None
 
 
 class RunLogEntry(BaseModel):
@@ -651,6 +678,280 @@ async def execute_plan(
         caller="web.execute",
         extra_log={"persona": "coder"},
     )
+
+
+@app.post("/api/sessions/{session_id}/review", response_model=ReviewResponse)
+async def review(
+    session_id: str,
+    payload: ReviewRequest,
+    request: Request,
+) -> ReviewResponse:
+    """Run the REVIEWER persona on a diff and return a structured review.
+
+    Like /plan, this is a short one-shot call (no SSE) using a tool-less
+    persona. The review is stored in session.metadata["last_review"] and
+    NOT added to the main chat history.
+    """
+    state = _state(request)
+    session = state.get_session(session_id)
+    selected_profile = payload.model_profile or session.metadata.get("model_profile")
+    try:
+        resolved_profile = resolve_model_profile(
+            state.config,
+            selected_profile,
+            list_installed_ollama_models(state.config),
+        )
+    except UnknownModelProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    review_session = Session(
+        session_id=session.session_id + "::review",
+        messages=[],
+        workspace_dir=session.workspace_dir,
+        metadata={"model_profile": resolved_profile.key, "role": "reviewer"},
+    )
+    review_session.add_system(REVIEWER.system_prompt)
+    review_session.add_user(f"Review this change:\n\n{payload.diff}")
+
+    agent = state.make_agent(resolved_profile.key, persona=REVIEWER)
+    agent.max_iterations = 3
+
+    started_at = time.monotonic()
+    log_error: str | None = None
+    run = None
+    try:
+        run = await agent.run(review_session)
+    except LLMError as e:
+        log.warning("review LLM error: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="LLM backend unavailable for review. Run codesmith info.",
+        ) from e
+    except Exception as e:  # noqa: BLE001
+        log.exception("review failed")
+        log_error = f"{type(e).__name__}: {e}"
+        raise HTTPException(status_code=500, detail=log_error) from e
+    finally:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        with contextlib.suppress(Exception):
+            state.run_logger.record(
+                build_run_record(
+                    session_id=session.session_id,
+                    profile_key=resolved_profile.key,
+                    provider=resolved_profile.primary.provider,
+                    model=resolved_profile.primary.model,
+                    user_message=payload.diff[:200],
+                    steps=len(run.steps) if run else 0,
+                    tokens=run.total_tokens if run else 0,
+                    hit_limit=bool(run.hit_limit) if run else False,
+                    duration_ms=duration_ms,
+                    forced_final=bool(run.forced_final) if run else False,
+                    error=log_error,
+                    extra={"caller": "web.review", "persona": "reviewer"},
+                )
+            )
+
+    review_text = (run.final_text or "").strip()
+    # Extract verdict from the review text.
+    verdict = "UNKNOWN"
+    for line in review_text.splitlines():
+        upper = line.strip().upper()
+        if upper.startswith("APPROVE WITH NITS"):
+            verdict = "APPROVE WITH NITS"
+            break
+        if upper.startswith("REQUEST CHANGES"):
+            verdict = "REQUEST CHANGES"
+            break
+        if upper.startswith("APPROVE"):
+            verdict = "APPROVE"
+            break
+
+    session.metadata["last_review"] = {
+        "diff": payload.diff[:2000],
+        "text": review_text,
+        "verdict": verdict,
+        "provider": resolved_profile.primary.provider,
+        "model": resolved_profile.primary.model,
+        "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    state.save_session(session)
+
+    return ReviewResponse(
+        session_id=session.session_id,
+        persona=REVIEWER.key,
+        provider=resolved_profile.primary.provider,
+        model=resolved_profile.primary.model,
+        review_text=review_text,
+        verdict=verdict,
+        steps=len(run.steps),
+        tokens=run.total_tokens,
+        duration_ms=int((time.monotonic() - started_at) * 1000),
+    )
+
+
+@app.post("/api/sessions/{session_id}/solve")
+async def solve(
+    session_id: str,
+    payload: SolveRequest,
+    request: Request,
+) -> EventSourceResponse:
+    """Run the self-repair loop on a task, streamed via SSE.
+
+    Unlike /chat (single agent run), this uses SelfRepairLoop which retries
+    on failure with contextual nudges. The SSE protocol is the same as
+    /chat so the UI renders it identically; the loop handles the retry
+    logic internally by adding nudge messages to the session.
+    """
+    state = _state(request)
+    session = state.get_session(session_id)
+    selected_profile = payload.model_profile or session.metadata.get("model_profile")
+    try:
+        resolved_profile = resolve_model_profile(
+            state.config,
+            selected_profile,
+            list_installed_ollama_models(state.config),
+        )
+    except UnknownModelProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    session.metadata["model_profile"] = resolved_profile.key
+
+    is_first_turn = not any(m.get("role") == "user" for m in session.messages)
+    if is_first_turn:
+        snapshot_block = bootstrap_system_prompt_addition(session.workspace_dir)
+        if snapshot_block:
+            session.add_system(DEFAULT_SYSTEM_PROMPT + "\n\n" + snapshot_block)
+
+    # The SelfRepairLoop adds the user message itself.
+    agent = state.make_agent(resolved_profile.key)
+
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    async def runner() -> None:
+        started_at = time.monotonic()
+        log_error: str | None = None
+        result = None
+        try:
+            await queue.put(
+                {
+                    "event": "start",
+                    "data": {
+                        "message": payload.task,
+                        "model_profile": resolved_profile.key,
+                        "provider": resolved_profile.primary.provider,
+                        "model": resolved_profile.primary.model,
+                    },
+                }
+            )
+            loop = SelfRepairLoop(
+                agent=agent,
+                max_attempts=payload.max_attempts,
+                require_success_exec=True,
+            )
+            result = await loop.solve(session, payload.task)
+            pending_count = sum(
+                1
+                for c in list_pending_changes(session)
+                if c.get("state") == "pending"
+            )
+            await queue.put(
+                {
+                    "event": "final",
+                    "data": {
+                        "text": result.final_text,
+                        "steps": sum(len(r.steps) for r in result.runs),
+                        "tokens": result.total_tokens,
+                        "hit_limit": not result.ok,
+                        "forced_final": False,
+                        "compacted": 0,
+                        "pending_count": pending_count,
+                        "attempts": result.attempts,
+                        "solved": result.ok,
+                    },
+                }
+            )
+        except asyncio.CancelledError:
+            log.info("solve cancelled for session %s", session.session_id)
+            log_error = "cancelled"
+            await queue.put(
+                {
+                    "event": "error",
+                    "data": {"error": "Solve cancelled by user.", "cancelled": True},
+                }
+            )
+            raise
+        except LLMError as e:
+            log.warning("LLM router exhausted: %s", e)
+            log_error = f"LLMError: {e}"
+            await queue.put(
+                {
+                    "event": "error",
+                    "data": {
+                        "error": "LLM backend unavailable.",
+                        "details": str(e),
+                    },
+                }
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("solve failed")
+            log_error = f"{type(e).__name__}: {e}"
+            await queue.put(
+                {
+                    "event": "error",
+                    "data": {"error": log_error},
+                }
+            )
+        finally:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            with contextlib.suppress(Exception):
+                state.save_session(session)
+            with contextlib.suppress(Exception):
+                state.run_logger.record(
+                    build_run_record(
+                        session_id=session.session_id,
+                        profile_key=resolved_profile.key,
+                        provider=resolved_profile.primary.provider,
+                        model=resolved_profile.primary.model,
+                        user_message=payload.task,
+                        steps=(
+                            sum(len(r.steps) for r in result.runs) if result else 0
+                        ),
+                        tokens=result.total_tokens if result else 0,
+                        hit_limit=not result.ok if result else True,
+                        duration_ms=duration_ms,
+                        forced_final=False,
+                        error=log_error,
+                        extra={
+                            "caller": "web.solve",
+                            "attempts": result.attempts if result else 0,
+                            "solved": result.ok if result else False,
+                        },
+                    )
+                )
+            await queue.put(None)
+
+    task = asyncio.create_task(runner())
+    state.register_inflight(session.session_id, task)
+    task.add_done_callback(lambda t: state.clear_inflight(session.session_id, t))
+
+    async def event_stream() -> AsyncIterator[dict[str, str]]:
+        try:
+            while True:
+                if await request.is_disconnected():
+                    task.cancel()
+                    return
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except TimeoutError:
+                    yield {"event": "ping", "data": "{}"}
+                    continue
+                if item is None:
+                    return
+                yield {"event": item["event"], "data": json.dumps(item["data"])}
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return EventSourceResponse(event_stream())
 
 
 @app.get("/api/models", response_model=ModelsResponse)

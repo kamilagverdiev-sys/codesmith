@@ -97,6 +97,12 @@ def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[AppState]
 def client(state: AppState, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     """A TestClient that bypasses the lifespan loader and injects our state."""
 
+    # Mock Ollama discovery so tests don't hang when Ollama isn't running.
+    monkeypatch.setattr(
+        "codesmith.api.main.list_installed_ollama_models",
+        lambda _cfg: [],
+    )
+
     # The default lifespan calls load_config(); we don't want that.
     async def _no_op_lifespan(_app):  # noqa: ANN001
         _app.state.codesmith = state
@@ -1002,3 +1008,211 @@ def test_final_event_includes_compacted(
     events = _parse_sse_stream(body)
     final = next(d for n, d in events if n == "final")
     assert "compacted" in final
+
+
+# ============================================================
+# Review endpoint (6)
+# ============================================================
+
+
+def _fake_reviewer_run_factory(verdict: str = "APPROVE"):
+    review_text = (
+        f"{verdict}\n\n"
+        "The code looks clean and well-structured.\n"
+        "- No obvious bugs.\n"
+        "- Tests cover the main path.\n"
+    )
+
+    async def fake_run(self, session, on_step=None):
+        session.add_assistant(content=review_text)
+        step = AgentStep(
+            response=LLMResponse(
+                content=review_text,
+                tool_calls=[],
+                finish_reason="stop",
+                usage={
+                    "prompt_tokens": 50,
+                    "completion_tokens": 30,
+                    "total_tokens": 80,
+                },
+                model="test/reviewer",
+                raw=None,
+            ),
+            tool_results=[],
+        )
+        if on_step:
+            await on_step(step, 0)
+        return AgentRun(
+            final_text=review_text,
+            steps=[step],
+            hit_limit=False,
+            total_tokens=80,
+        )
+
+    return fake_run, review_text
+
+
+def test_review_endpoint_happy_path(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run, review_text = _fake_reviewer_run_factory("APPROVE")
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/review",
+        json={"diff": "--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["persona"] == "reviewer"
+    assert body["verdict"] == "APPROVE"
+    assert body["review_text"] == review_text.strip()
+    assert body["steps"] == 1
+    assert body["tokens"] == 80
+    assert body["duration_ms"] >= 0
+
+
+def test_review_endpoint_request_changes_verdict(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run, _ = _fake_reviewer_run_factory("REQUEST CHANGES")
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/review",
+        json={"diff": "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b"},
+    )
+    assert r.status_code == 200
+    assert r.json()["verdict"] == "REQUEST CHANGES"
+
+
+def test_review_endpoint_approve_with_nits_verdict(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run, _ = _fake_reviewer_run_factory("APPROVE WITH NITS")
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/review",
+        json={"diff": "+line"},
+    )
+    assert r.status_code == 200
+    assert r.json()["verdict"] == "APPROVE WITH NITS"
+
+
+def test_review_stores_last_review_on_session(
+    client: TestClient,
+    state: AppState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run, _ = _fake_reviewer_run_factory("APPROVE")
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    client.post(
+        f"/api/sessions/{sid}/review",
+        json={"diff": "diff content"},
+    )
+
+    session = state.session_store.get(sid)
+    assert session is not None
+    last_review = session.metadata.get("last_review")
+    assert last_review is not None
+    assert last_review["verdict"] == "APPROVE"
+    assert "diff content" in last_review["diff"]
+    assert "ts" in last_review
+
+
+def test_review_does_not_pollute_main_chat(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_run, _ = _fake_reviewer_run_factory("APPROVE")
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    before = client.get(f"/api/sessions/{sid}/messages").json()
+    assert before["messages"] == []
+
+    client.post(
+        f"/api/sessions/{sid}/review",
+        json={"diff": "+something"},
+    )
+
+    after = client.get(f"/api/sessions/{sid}/messages").json()
+    assert after["messages"] == []  # review stayed isolated
+
+
+def test_review_unknown_session_404(client: TestClient) -> None:
+    r = client.post(
+        "/api/sessions/no-such/review",
+        json={"diff": "anything"},
+    )
+    assert r.status_code == 404
+
+
+def test_review_empty_diff_validation_error(client: TestClient) -> None:
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/review",
+        json={"diff": ""},
+    )
+    assert r.status_code == 422
+
+
+# ============================================================
+# Solve endpoint (6)
+# ============================================================
+
+
+def test_solve_endpoint_happy_path(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /solve streams SSE and returns a final event with attempts/solved."""
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/solve",
+        json={"task": "write fibonacci function", "max_attempts": 2},
+    ) as resp:
+        assert resp.status_code == 200
+        body = resp.read().decode("utf-8")
+
+    events = _parse_sse_stream(body)
+    names = [name for name, _ in events if name != "ping"]
+    assert "start" in names
+    assert "final" in names
+
+    final = next(d for n, d in events if n == "final")
+    assert "text" in final
+    assert "attempts" in final
+    assert isinstance(final["solved"], bool)
+    assert "pending_count" in final
+
+
+def test_solve_unknown_session_404(client: TestClient) -> None:
+    r = client.post(
+        "/api/sessions/nonexistent/solve",
+        json={"task": "anything"},
+    )
+    assert r.status_code == 404
+
+
+def test_solve_empty_task_validation_error(client: TestClient) -> None:
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/solve",
+        json={"task": ""},
+    )
+    assert r.status_code == 422

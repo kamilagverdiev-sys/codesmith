@@ -49,12 +49,13 @@ from codesmith.model_selection import (
     pull_target_for_selection,
     resolve_model_profile,
 )
-from codesmith.personas import ARCHITECT, CODER, Persona, list_personas
+from codesmith.personas import ARCHITECT, CODER, REVIEWER, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
 from codesmith.tools.filesystem import default_filesystem_tools
 from codesmith.tools.registry import ToolRegistry
 from codesmith.tools.sandbox import SandboxTool
+from codesmith.tools.web_search import WebSearchTool
 
 app = typer.Typer(
     name="codesmith",
@@ -104,6 +105,8 @@ def _build_agent(
         if config.tools.filesystem.enabled:
             for t in default_filesystem_tools():
                 registry.register(t)
+        if config.tools.web_search.enabled:
+            registry.register(WebSearchTool(config.tools.web_search))
 
     agent_kwargs: dict[str, Any] = {
         "config": config,
@@ -437,6 +440,78 @@ def execute(
             run.final_text or "[dim](no output)[/dim]",
             title="coder result",
             border_style="green",
+        )
+    )
+    _print_stats(steps=len(run.steps), tokens=run.total_tokens, hit_limit=run.hit_limit)
+
+
+@app.command()
+def review(
+    diff_file: Annotated[
+        Path | None,
+        typer.Option("--diff", help="Path to a diff/patch file to review."),
+    ] = None,
+    diff_text: Annotated[
+        str | None,
+        typer.Argument(help="Diff text to review (alternative to --diff file)."),
+    ] = None,
+    config: Annotated[Path, typer.Option("--config", "-c")] = Path("config.yaml"),
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
+) -> None:
+    """Review a diff using the REVIEWER persona.
+
+    Provide a diff as a positional argument, via --diff FILE, or pipe
+    from stdin (e.g. ``git diff | codesmith review``). The reviewer
+    outputs a structured verdict: APPROVE / APPROVE WITH NITS / REQUEST
+    CHANGES.
+    """
+    text: str | None = diff_text
+    if text is None and diff_file is not None:
+        text = diff_file.read_text(encoding="utf-8")
+    if text is None:
+        console.print("[dim]reading diff from stdin (paste diff, then Ctrl+D)...[/dim]")
+        text = sys.stdin.read()
+    if not text or not text.strip():
+        raise typer.Exit("No diff text provided.")
+
+    agent, session, _cfg, resolved = _build_agent(config, profile, persona=REVIEWER)
+    agent.max_iterations = 3
+
+    console.print(Rule("[bold cyan]Codesmith review"))
+    console.print(
+        f"[dim]session={session.session_id[:8]}  "
+        f"model={resolved.primary.provider}/{resolved.primary.model}  "
+        f"persona=reviewer[/dim]\n"
+    )
+
+    session.add_user(f"Review this change:\n\n{text}")
+    started = time.monotonic()
+    run = None
+    error: str | None = None
+    try:
+        run = asyncio.run(agent.run(session))
+    except Exception as e:  # noqa: BLE001
+        error = f"{type(e).__name__}: {e}"
+        console.print(f"[red]{error}[/red]")
+    finally:
+        _log_run(
+            resolved=resolved,
+            session=session,
+            run=run,
+            message=text[:200],
+            started=started,
+            error=error,
+            caller="cli.review",
+        )
+
+    if run is None:
+        raise typer.Exit(1)
+
+    console.print(
+        Panel(
+            run.final_text or "[dim](no review)[/dim]",
+            title="review",
+            border_style="yellow",
         )
     )
     _print_stats(steps=len(run.steps), tokens=run.total_tokens, hit_limit=run.hit_limit)
