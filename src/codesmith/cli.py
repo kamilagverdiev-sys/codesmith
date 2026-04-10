@@ -49,7 +49,7 @@ from codesmith.model_selection import (
     pull_target_for_selection,
     resolve_model_profile,
 )
-from codesmith.personas import ARCHITECT, Persona, list_personas
+from codesmith.personas import ARCHITECT, CODER, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
 from codesmith.tools.filesystem import default_filesystem_tools
@@ -363,6 +363,80 @@ def plan(
             run.final_text or "[dim](no plan)[/dim]",
             title="plan",
             border_style="cyan",
+        )
+    )
+    _print_stats(steps=len(run.steps), tokens=run.total_tokens, hit_limit=run.hit_limit)
+
+
+@app.command()
+def execute(
+    plan_file: Annotated[
+        Path | None,
+        typer.Option("--plan", help="Path to a file containing the plan text."),
+    ] = None,
+    plan_text: Annotated[
+        str | None,
+        typer.Argument(help="Plan text to execute (alternative to --plan file)."),
+    ] = None,
+    config: Annotated[Path, typer.Option("--config", "-c")] = Path("config.yaml"),
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
+) -> None:
+    """Execute a plan using the CODER persona.
+
+    Provide the plan as a positional argument or via --plan FILE. If
+    neither is given, reads from stdin. The CODER persona follows the
+    plan step by step using tools.
+    """
+    text: str | None = plan_text
+    if text is None and plan_file is not None:
+        text = plan_file.read_text(encoding="utf-8")
+    if text is None:
+        # Read from stdin.
+        console.print("[dim]reading plan from stdin (paste plan, then Ctrl+D)...[/dim]")
+        text = sys.stdin.read()
+    if not text or not text.strip():
+        raise typer.Exit("No plan text provided.")
+
+    agent, session, _cfg, resolved = _build_agent(config, profile, persona=CODER)
+
+    console.print(Rule("[bold cyan]Codesmith execute"))
+    console.print(
+        f"[dim]session={session.session_id[:8]}  "
+        f"model={resolved.primary.provider}/{resolved.primary.model}  "
+        f"persona=coder[/dim]\n"
+    )
+
+    user_message = (
+        "Execute this plan step by step. Do not deviate. Use tools.\n\n" + text
+    )
+    session.add_user(user_message)
+    started = time.monotonic()
+    run = None
+    error: str | None = None
+    try:
+        run = asyncio.run(agent.run(session))
+    except Exception as e:  # noqa: BLE001
+        error = f"{type(e).__name__}: {e}"
+        console.print(f"[red]{error}[/red]")
+    finally:
+        _log_run(
+            resolved=resolved,
+            session=session,
+            run=run,
+            message=user_message[:200],
+            started=started,
+            error=error,
+            caller="cli.execute",
+        )
+
+    if run is None:
+        raise typer.Exit(1)
+
+    console.print(
+        Panel(
+            run.final_text or "[dim](no output)[/dim]",
+            title="coder result",
+            border_style="green",
         )
     )
     _print_stats(steps=len(run.steps), tokens=run.total_tokens, hit_limit=run.hit_limit)

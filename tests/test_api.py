@@ -884,3 +884,121 @@ def test_chat_emits_error_event_on_failure(
     assert "error" in names
     err = next(d for n, d in events if n == "error")
     assert "kaboom" in err["error"]
+
+
+# ============================================================
+# Execute plan endpoint
+# ============================================================
+
+
+def test_execute_plan_from_last_plan(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /execute-plan uses session.metadata["last_plan"] when no body plan_text."""
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+
+    # Store a plan on the session via the /plan endpoint.
+    # We need to mock Agent.run for the plan call too.
+    r = client.post(f"/api/sessions/{sid}/plan", json={"task": "build a CLI"})
+    assert r.status_code == 200
+    assert r.json()["plan_text"] == "final answer is 42"
+
+    # Now execute it.
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/execute-plan",
+        json={},
+    ) as resp:
+        assert resp.status_code == 200
+        body = resp.read().decode("utf-8")
+
+    events = _parse_sse_stream(body)
+    names = [name for name, _ in events if name != "ping"]
+    assert "start" in names
+    assert "final" in names
+
+    final = next(d for n, d in events if n == "final")
+    assert final["text"] == "final answer is 42"
+
+
+def test_execute_plan_with_explicit_plan_text(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /execute-plan with explicit plan_text in body."""
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/execute-plan",
+        json={"plan_text": "Step 1: create hello.py\nStep 2: run it"},
+    ) as resp:
+        assert resp.status_code == 200
+        body = resp.read().decode("utf-8")
+
+    events = _parse_sse_stream(body)
+    names = [name for name, _ in events if name != "ping"]
+    assert "final" in names
+
+
+def test_execute_plan_404_when_no_plan(client: TestClient) -> None:
+    """POST /execute-plan without plan or last_plan returns 404."""
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(f"/api/sessions/{sid}/execute-plan", json={})
+    assert r.status_code == 404
+    assert "No plan found" in r.json()["detail"]
+
+
+def test_execute_plan_404_unknown_session(client: TestClient) -> None:
+    r = client.post("/api/sessions/nonexistent/execute-plan", json={"plan_text": "x"})
+    assert r.status_code == 404
+
+
+def test_final_event_includes_pending_count(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The final SSE event should include pending_count field."""
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/chat",
+        json={"message": "test pending count"},
+    ) as resp:
+        body = resp.read().decode("utf-8")
+
+    events = _parse_sse_stream(body)
+    final = next(d for n, d in events if n == "final")
+    assert "pending_count" in final
+    assert final["pending_count"] == 0
+
+
+def test_final_event_includes_compacted(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The final SSE event should include compacted field."""
+    fake_run = _fake_run_factory()
+    monkeypatch.setattr("codesmith.agent.Agent.run", fake_run)
+
+    sid = client.post("/api/sessions").json()["session_id"]
+    with client.stream(
+        "POST",
+        f"/api/sessions/{sid}/chat",
+        json={"message": "test compacted"},
+    ) as resp:
+        body = resp.read().decode("utf-8")
+
+    events = _parse_sse_stream(body)
+    final = next(d for n, d in events if n == "final")
+    assert "compacted" in final

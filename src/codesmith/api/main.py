@@ -56,7 +56,8 @@ from codesmith.pending_changes import (
     reject_change,
     set_auto_approve,
 )
-from codesmith.personas import ARCHITECT, Persona, list_personas
+from codesmith.pending_changes import list_pending as list_pending_changes
+from codesmith.personas import ARCHITECT, CODER, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
 from codesmith.session_store import (
@@ -363,6 +364,12 @@ class PlanResponse(BaseModel):
     duration_ms: int
 
 
+class ExecutePlanRequest(BaseModel):
+    plan_text: str | None = None
+    model_profile: str | None = None
+    max_iterations: int | None = Field(default=None, ge=1, le=50)
+
+
 class RunLogEntry(BaseModel):
     ts: str
     session_id: str
@@ -565,6 +572,84 @@ async def plan(
         steps=len(run.steps),
         tokens=run.total_tokens,
         duration_ms=int((time.monotonic() - started_at) * 1000),
+    )
+
+
+@app.post("/api/sessions/{session_id}/execute-plan")
+async def execute_plan(
+    session_id: str,
+    request: Request,
+    payload: Annotated[ExecutePlanRequest | None, Body()] = None,
+) -> EventSourceResponse:
+    """Execute a plan using the CODER persona, streamed via SSE.
+
+    If ``plan_text`` is not provided in the request body, falls back to
+    ``session.metadata["last_plan"]["text"]`` (set by the /plan endpoint).
+    Uses the same SSE protocol as /chat so the UI can render it
+    identically.
+    """
+    state = _state(request)
+    session = state.get_session(session_id)
+
+    # Resolve plan text.
+    plan_text: str | None = None
+    if payload and payload.plan_text:
+        plan_text = payload.plan_text
+    else:
+        last_plan = session.metadata.get("last_plan")
+        if isinstance(last_plan, dict):
+            plan_text = last_plan.get("text")
+    if not plan_text or not plan_text.strip():
+        raise HTTPException(
+            status_code=404,
+            detail="No plan found. Run /plan first or provide plan_text.",
+        )
+
+    # Resolve model profile.
+    selected_profile = (
+        (payload.model_profile if payload else None)
+        or session.metadata.get("model_profile")
+    )
+    try:
+        resolved_profile = resolve_model_profile(
+            state.config,
+            selected_profile,
+            list_installed_ollama_models(state.config),
+        )
+    except UnknownModelProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Bootstrap workspace snapshot on first turn (same as /chat).
+    is_first_turn = not any(m.get("role") == "user" for m in session.messages)
+    if is_first_turn:
+        snapshot_block = bootstrap_system_prompt_addition(session.workspace_dir)
+        base_prompt = CODER.system_prompt
+        if snapshot_block:
+            base_prompt = base_prompt + "\n\n" + snapshot_block
+        session.add_system(base_prompt)
+
+    # Add the plan as a user message for the coder to execute.
+    user_message = (
+        "Execute this plan step by step. Do not deviate. "
+        "Use tools to implement each step.\n\n" + plan_text
+    )
+    session.add_user(user_message)
+
+    agent = state.make_agent(resolved_profile.key, persona=CODER)
+    if payload and payload.max_iterations:
+        agent.max_iterations = payload.max_iterations
+
+    return _build_sse_response(
+        state=state,
+        session=session,
+        agent=agent,
+        request=request,
+        user_message=user_message,
+        profile_key=resolved_profile.key,
+        provider=resolved_profile.primary.provider,
+        model=resolved_profile.primary.model,
+        caller="web.execute",
+        extra_log={"persona": "coder"},
     )
 
 
@@ -820,57 +905,29 @@ async def abort_chat(session_id: str, request: Request) -> dict[str, bool]:
     return {"cancelled": cancelled}
 
 
-@app.post("/api/sessions/{session_id}/chat")
-async def chat(
-    session_id: str,
-    payload: ChatRequest,
+def _build_sse_response(
+    *,
+    state: AppState,
+    session: Session,
+    agent: Agent,
     request: Request,
+    user_message: str,
+    profile_key: str,
+    provider: str,
+    model: str,
+    caller: str = "web",
+    extra_log: dict[str, Any] | None = None,
 ) -> EventSourceResponse:
-    """Send one user message; stream agent progress as Server-Sent Events.
+    """Shared SSE streaming logic for /chat and /execute-plan.
 
-    Event types emitted in order:
-        start  → {message}
-        step   → {iteration, assistant_text, tool_calls: [{name, args}],
-                  tool_summaries: [str]}  (one per agent iteration)
-        final  → {text, steps, tokens, hit_limit}
-        error  → {error}      (terminal; stream ends)
-
-    The connection closes after `final` or `error`.
+    Runs the agent loop in a background task, streams step/final/error
+    events through an asyncio.Queue, and handles cancellation, logging,
+    and session persistence.
     """
-    state = _state(request)
-    session = state.get_session(session_id)
-    selected_profile = payload.model_profile or session.metadata.get("model_profile")
-    try:
-        resolved_profile = resolve_model_profile(
-            state.config,
-            selected_profile,
-            list_installed_ollama_models(state.config),
-        )
-    except UnknownModelProfileError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    session.metadata["model_profile"] = resolved_profile.key
-
-    # Bootstrap: on the very first user turn, inject a short workspace
-    # snapshot into the system prompt so the agent doesn't burn its
-    # iteration budget on list_directory calls just to orient itself.
-    is_first_turn = not any(m.get("role") == "user" for m in session.messages)
-    if is_first_turn:
-        snapshot_block = bootstrap_system_prompt_addition(session.workspace_dir)
-        if snapshot_block:
-            session.add_system(DEFAULT_SYSTEM_PROMPT + "\n\n" + snapshot_block)
-
-    session.add_user(payload.message)
-
-    agent = state.make_agent(resolved_profile.key)
-    if payload.max_iterations:
-        agent.max_iterations = payload.max_iterations
-
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
     async def on_step(step: AgentStep, iteration: int) -> None:
         if not step.response.tool_calls and not step.tool_results:
-            # Plain assistant text is surfaced by the terminal `final` event;
-            # skip the duplicate debug step in the Web UI.
             return
         tool_calls_summary = []
         for tc in step.response.tool_calls or []:
@@ -884,6 +941,12 @@ async def chat(
         tool_summaries = [
             _summarize_tool_result(tcid, tr) for tcid, tr in step.tool_results
         ]
+        # Count pending changes so the UI knows when to render diff cards.
+        pending_count = sum(
+            1
+            for c in list_pending_changes(session)
+            if c.get("state") == "pending"
+        )
         await queue.put(
             {
                 "event": "step",
@@ -893,6 +956,7 @@ async def chat(
                     "tool_calls": tool_calls_summary,
                     "tool_results": tool_summaries,
                     "tokens": step.response.usage.get("total_tokens", 0),
+                    "pending_count": pending_count,
                 },
             }
         )
@@ -906,14 +970,19 @@ async def chat(
                 {
                     "event": "start",
                     "data": {
-                        "message": payload.message,
-                        "model_profile": resolved_profile.key,
-                        "provider": resolved_profile.primary.provider,
-                        "model": resolved_profile.primary.model,
+                        "message": user_message,
+                        "model_profile": profile_key,
+                        "provider": provider,
+                        "model": model,
                     },
                 }
             )
             run = await agent.run(session, on_step=on_step)
+            pending_count = sum(
+                1
+                for c in list_pending_changes(session)
+                if c.get("state") == "pending"
+            )
             await queue.put(
                 {
                     "event": "final",
@@ -923,13 +992,12 @@ async def chat(
                         "tokens": run.total_tokens,
                         "hit_limit": run.hit_limit,
                         "forced_final": run.forced_final,
+                        "compacted": run.compacted_count,
+                        "pending_count": pending_count,
                     },
                 }
             )
         except asyncio.CancelledError:
-            # The abort endpoint or disconnected client cancelled us.
-            # Surface it as a friendly error event so the UI can render
-            # it instead of just silently hanging the bubble.
             log.info("chat cancelled for session %s", session.session_id)
             log_error = "cancelled"
             await queue.put(
@@ -940,8 +1008,6 @@ async def chat(
             )
             raise
         except LLMError as e:
-            # All providers failed. Surface a friendly hint instead of the
-            # full multi-provider traceback.
             log.warning("LLM router exhausted: %s", e)
             log_error = f"LLMError: {e}"
             await queue.put(
@@ -969,28 +1035,26 @@ async def chat(
             )
         finally:
             duration_ms = int((time.monotonic() - started_at) * 1000)
-            # Always save whatever messages we managed to collect — even
-            # on cancel / error — so the user can re-open the session.
             with contextlib.suppress(Exception):
                 state.save_session(session)
             with contextlib.suppress(Exception):
                 state.run_logger.record(
                     build_run_record(
                         session_id=session.session_id,
-                        profile_key=resolved_profile.key,
-                        provider=resolved_profile.primary.provider,
-                        model=resolved_profile.primary.model,
-                        user_message=payload.message,
+                        profile_key=profile_key,
+                        provider=provider,
+                        model=model,
+                        user_message=user_message,
                         steps=len(run.steps) if run else 0,
                         tokens=run.total_tokens if run else 0,
                         hit_limit=bool(run.hit_limit) if run else False,
                         duration_ms=duration_ms,
                         forced_final=bool(run.forced_final) if run else False,
                         error=log_error,
-                        extra={"caller": "web"},
+                        extra={"caller": caller, **(extra_log or {})},
                     )
                 )
-            await queue.put(None)  # sentinel
+            await queue.put(None)
 
     task = asyncio.create_task(runner())
     state.register_inflight(session.session_id, task)
@@ -1005,7 +1069,6 @@ async def chat(
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=1.0)
                 except TimeoutError:
-                    # Heartbeat keeps proxies happy and lets us notice disconnects.
                     yield {"event": "ping", "data": "{}"}
                     continue
                 if item is None:
@@ -1016,6 +1079,60 @@ async def chat(
                 task.cancel()
 
     return EventSourceResponse(event_stream())
+
+
+@app.post("/api/sessions/{session_id}/chat")
+async def chat(
+    session_id: str,
+    payload: ChatRequest,
+    request: Request,
+) -> EventSourceResponse:
+    """Send one user message; stream agent progress as Server-Sent Events.
+
+    Event types emitted in order:
+        start  → {message}
+        step   → {iteration, assistant_text, tool_calls, tool_results,
+                  tokens, pending_count}  (one per agent iteration)
+        final  → {text, steps, tokens, hit_limit, compacted, pending_count}
+        error  → {error}      (terminal; stream ends)
+
+    The connection closes after `final` or `error`.
+    """
+    state = _state(request)
+    session = state.get_session(session_id)
+    selected_profile = payload.model_profile or session.metadata.get("model_profile")
+    try:
+        resolved_profile = resolve_model_profile(
+            state.config,
+            selected_profile,
+            list_installed_ollama_models(state.config),
+        )
+    except UnknownModelProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    session.metadata["model_profile"] = resolved_profile.key
+
+    is_first_turn = not any(m.get("role") == "user" for m in session.messages)
+    if is_first_turn:
+        snapshot_block = bootstrap_system_prompt_addition(session.workspace_dir)
+        if snapshot_block:
+            session.add_system(DEFAULT_SYSTEM_PROMPT + "\n\n" + snapshot_block)
+
+    session.add_user(payload.message)
+
+    agent = state.make_agent(resolved_profile.key)
+    if payload.max_iterations:
+        agent.max_iterations = payload.max_iterations
+
+    return _build_sse_response(
+        state=state,
+        session=session,
+        agent=agent,
+        request=request,
+        user_message=payload.message,
+        profile_key=resolved_profile.key,
+        provider=resolved_profile.primary.provider,
+        model=resolved_profile.primary.model,
+    )
 
 
 # ============================================================

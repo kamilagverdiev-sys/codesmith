@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from codesmith.compaction import compact, should_compact
 from codesmith.llm import LLMResponse, LLMRouter
 from codesmith.personas import DEFAULT as DEFAULT_PERSONA
 from codesmith.tools.base import ToolResult
@@ -244,6 +245,7 @@ class AgentRun:
     hit_limit: bool
     total_tokens: int
     forced_final: bool = False
+    compacted_count: int = 0
 
 
 class Agent:
@@ -372,9 +374,18 @@ class Agent:
         total_tokens = 0
         hit_limit = False
         forced_final = False
+        compacted_count = 0
         repeated_step_count = 0
         last_signature: tuple[Any, ...] | None = None
         signature_window: list[tuple[Any, ...]] = []
+
+        # Pre-step compaction: if the session is too long, summarize old
+        # messages before burning tokens on a full-context LLM call.
+        compaction_cfg = self.config.loops.compaction
+        if should_compact(session, compaction_cfg):
+            compacted_count = await compact(session, self.llm, compaction_cfg)
+            if compacted_count:
+                log.info("pre-step compaction removed %d messages", compacted_count)
 
         async def _emit_forced_final(reason: str, iteration: int) -> None:
             nonlocal total_tokens, forced_final
@@ -470,4 +481,5 @@ class Agent:
             hit_limit=hit_limit,
             total_tokens=total_tokens,
             forced_final=forced_final,
+            compacted_count=compacted_count,
         )

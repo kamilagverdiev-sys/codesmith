@@ -821,6 +821,110 @@
     border-color: var(--accent-2);
   }
   .plan-card .actions .accept:hover { background: rgba(187,154,247,0.1); }
+
+  /* ---- Auto-approve toggle (header) ---- */
+  .auto-approve-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .auto-approve-toggle input { accent-color: var(--green); }
+  .auto-approve-toggle.active { color: var(--green); }
+
+  /* ---- Pending change diff card ---- */
+  .diff-card {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-top: 12px;
+    overflow: hidden;
+    transition: border-color 0.3s, opacity 0.3s;
+  }
+  .diff-card .diff-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--bg-3);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .diff-card .diff-head .kind {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--yellow);
+  }
+  .diff-card .diff-head .path {
+    color: var(--accent);
+    margin-left: 10px;
+  }
+  .diff-card .diff-head .state-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .diff-card .diff-head .state-badge.pending { background: rgba(224,175,104,0.15); color: var(--yellow); }
+  .diff-card .diff-head .state-badge.applied { background: rgba(158,206,106,0.15); color: var(--green); }
+  .diff-card .diff-head .state-badge.rejected { background: rgba(247,118,142,0.15); color: var(--red); }
+
+  .diff-card .diff-body {
+    padding: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .diff-card .diff-body .diff-line {
+    padding: 1px 14px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .diff-card .diff-body .diff-line.add { background: rgba(158,206,106,0.1); color: var(--green); }
+  .diff-card .diff-body .diff-line.del { background: rgba(247,118,142,0.08); color: var(--red); }
+  .diff-card .diff-body .diff-line.hunk { color: var(--accent); background: rgba(122,162,247,0.06); }
+  .diff-card .diff-body .diff-line.ctx { color: var(--fg-dim); }
+
+  .diff-card .diff-actions {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+  }
+  .diff-card .diff-actions button {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    padding: 5px 14px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--mono);
+    transition: all 0.15s;
+  }
+  .diff-card .diff-actions .approve-btn {
+    color: var(--green);
+    border-color: var(--green);
+  }
+  .diff-card .diff-actions .approve-btn:hover { background: rgba(158,206,106,0.1); }
+  .diff-card .diff-actions .reject-btn {
+    color: var(--red);
+    border-color: var(--red);
+  }
+  .diff-card .diff-actions .reject-btn:hover { background: rgba(247,118,142,0.08); }
+
+  .diff-card.resolved { opacity: 0.6; }
+  .diff-card.resolved .diff-actions { display: none; }
+  .diff-card.state-applied { border-color: var(--green); }
+  .diff-card.state-rejected { border-color: var(--red); }
+
   .hint {
     color: var(--fg-faint);
     font-size: 11px;
@@ -852,6 +956,10 @@
     <label class="fast-mode" id="fast-mode-label" title="Force the fast local profile (Qwen 2.5 Coder 7B) on top of whatever is selected">
       <input type="checkbox" id="fast-mode" />
       <span>fast</span>
+    </label>
+    <label class="auto-approve-toggle" id="auto-approve-label" title="When off, file edits require manual approval before writing to disk">
+      <input type="checkbox" id="auto-approve" checked />
+      <span>auto-approve</span>
     </label>
     <label class="toggle" title="Show internal tool steps and debug trace">
       <input type="checkbox" id="debug-steps" />
@@ -947,6 +1055,8 @@ const sidebarNewBtn = $('#sidebar-new');
 const sidebarToggleBtn = $('#sidebar-toggle-inline');
 const fastModeEl = $('#fast-mode');
 const fastModeLabelEl = $('#fast-mode-label');
+const autoApproveEl = $('#auto-approve');
+const autoApproveLabelEl = $('#auto-approve-label');
 const activityEl = $('#activity');
 const activityCountEl = $('#activity-count');
 const activityAvgEl = $('#activity-avg');
@@ -1237,6 +1347,14 @@ async function switchSession(targetId) {
       }
     }
     renderHistory(payload.messages || []);
+    // Sync auto-approve toggle with session state.
+    try {
+      const pcResp = await fetch('/api/sessions/' + targetId + '/pending-changes');
+      if (pcResp.ok) {
+        const pcData = await pcResp.json();
+        syncAutoApproveUI(pcData.auto_approve);
+      }
+    } catch {}
   } catch (e) {
     showError('Failed to load session: ' + e.message);
   }
@@ -1923,6 +2041,112 @@ async function runPlan() {
   inputEl.focus();
 }
 
+async function executePlan(planText) {
+  if (!planText || !sessionId) return;
+  if (inflight) return;
+  sendBtn.disabled = true;
+  planBtn.disabled = true;
+
+  // Render a "coder executing" turn
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → coder' }),
+      el('div', { class: 'bubble', text: '▶ Execute plan' }),
+    )
+  );
+
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / coder' }),
+  );
+  const stepsContainer = el('div', { class: 'steps' });
+  const typingEl = el('div', { class: 'typing', text: 'coder executing plan' });
+  assistantTurn.appendChild(typingEl);
+  assistantTurn.appendChild(stepsContainer);
+  const finalBubble = el('div', { class: 'bubble', style: 'display: none;' });
+  assistantTurn.appendChild(finalBubble);
+  const statsEl = el('div', { class: 'stats', style: 'display: none;' });
+  assistantTurn.appendChild(statsEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  const controller = new AbortController();
+  inflight = { abort: () => controller.abort() };
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/execute-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({ plan_text: planText, model_profile: currentEffectiveProfile() }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Execute request failed: ' + e.message, assistantTurn);
+    inflight = null;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    return;
+  }
+
+  if (!resp.ok || !resp.body) {
+    typingEl.remove();
+    let detail = resp.statusText;
+    try { const b = await resp.json(); if (b && b.detail) detail = b.detail; } catch {}
+    showError('Execute failed (' + resp.status + '): ' + detail, assistantTurn);
+    inflight = null;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let sawTerminalEvent = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      buf = normalizeSSEBuffer(buf);
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const event = parseSSE(raw);
+        if (!event) continue;
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    buf += decoder.decode();
+    buf = normalizeSSEBuffer(buf);
+    if (buf.trim()) {
+      const event = parseSSE(buf);
+      if (event) {
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    if (!sawTerminalEvent) {
+      showError('Stream ended before a final answer arrived.', assistantTurn);
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      showError('Execute stream failed: ' + e.message, assistantTurn);
+    }
+  } finally {
+    typingEl.remove();
+    inflight = null;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
 function renderPlanCard(parent, data) {
   const card = el('div', { class: 'plan-card' });
 
@@ -1944,13 +2168,7 @@ function renderPlanCard(parent, data) {
   const actions = el('div', { class: 'actions' });
   const accept = el('button', { class: 'accept', text: 'Accept & execute' });
   accept.addEventListener('click', () => {
-    // 5b will wire this to /execute-plan. For now, just drop the plan
-    // text into the input box so the user can send it through the
-    // normal chat flow with the coder persona.
-    inputEl.value =
-      'Execute this plan step by step. Do not deviate. Use tools.\n\n' +
-      (data.plan_text || '');
-    inputEl.focus();
+    executePlan(data.plan_text || '');
   });
   const copy = el('button', { text: 'Copy' });
   copy.addEventListener('click', async () => {
@@ -1975,6 +2193,124 @@ function renderPlanCard(parent, data) {
 
   parent.appendChild(card);
   scrollToBottom();
+}
+
+// ---- Pending changes diff cards ----
+
+function renderDiffLines(diffText) {
+  const container = document.createDocumentFragment();
+  for (const raw of (diffText || '').split('\n')) {
+    const line = el('div', { class: 'diff-line' });
+    line.textContent = raw;
+    if (raw.startsWith('+++') || raw.startsWith('---')) {
+      line.classList.add('hunk');
+    } else if (raw.startsWith('@@')) {
+      line.classList.add('hunk');
+    } else if (raw.startsWith('+')) {
+      line.classList.add('add');
+    } else if (raw.startsWith('-')) {
+      line.classList.add('del');
+    } else {
+      line.classList.add('ctx');
+    }
+    container.appendChild(line);
+  }
+  return container;
+}
+
+function renderDiffCard(parent, change) {
+  const card = el('div', { class: 'diff-card' });
+  card.dataset.idx = change.idx;
+
+  // Header
+  const head = el('div', { class: 'diff-head' });
+  const left = document.createDocumentFragment();
+  left.appendChild(el('span', { class: 'kind', text: 'change #' + change.idx + ' · ' + (change.kind || 'edit') }));
+  left.appendChild(el('span', { class: 'path', text: change.path || '' }));
+  const leftWrap = el('div', {}, ...Array.from(left.childNodes));
+  const badge = el('span', {
+    class: 'state-badge ' + (change.state || 'pending'),
+    text: change.state || 'pending',
+  });
+  head.appendChild(leftWrap);
+  head.appendChild(badge);
+  card.appendChild(head);
+
+  // Diff body
+  const body = el('div', { class: 'diff-body' });
+  body.appendChild(renderDiffLines(change.diff));
+  card.appendChild(body);
+
+  // Actions (only for pending)
+  if (change.state === 'pending') {
+    const actions = el('div', { class: 'diff-actions' });
+    const approveBtn = el('button', { class: 'approve-btn', text: 'Approve' });
+    const rejectBtn = el('button', { class: 'reject-btn', text: 'Reject' });
+
+    approveBtn.addEventListener('click', async () => {
+      approveBtn.disabled = true;
+      rejectBtn.disabled = true;
+      approveBtn.textContent = 'Applying...';
+      try {
+        const resp = await fetch(`/api/sessions/${sessionId}/pending-changes/${change.idx}/approve`, { method: 'POST' });
+        if (resp.ok) {
+          badge.textContent = 'applied';
+          badge.className = 'state-badge applied';
+          card.classList.add('resolved', 'state-applied');
+        } else {
+          const err = await resp.json().catch(() => ({}));
+          approveBtn.textContent = 'Failed: ' + (err.detail || resp.status);
+        }
+      } catch (e) {
+        approveBtn.textContent = 'Error';
+      }
+    });
+    rejectBtn.addEventListener('click', async () => {
+      approveBtn.disabled = true;
+      rejectBtn.disabled = true;
+      rejectBtn.textContent = 'Rejecting...';
+      try {
+        const resp = await fetch(`/api/sessions/${sessionId}/pending-changes/${change.idx}/reject`, { method: 'POST' });
+        if (resp.ok) {
+          badge.textContent = 'rejected';
+          badge.className = 'state-badge rejected';
+          card.classList.add('resolved', 'state-rejected');
+        } else {
+          rejectBtn.textContent = 'Failed';
+        }
+      } catch (e) {
+        rejectBtn.textContent = 'Error';
+      }
+    });
+
+    actions.appendChild(approveBtn);
+    actions.appendChild(rejectBtn);
+    card.appendChild(actions);
+  } else {
+    card.classList.add('resolved', 'state-' + change.state);
+  }
+
+  parent.appendChild(card);
+}
+
+async function fetchAndRenderPendingChanges(parent) {
+  if (!sessionId) return;
+  try {
+    const resp = await fetch(`/api/sessions/${sessionId}/pending-changes`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    syncAutoApproveUI(data.auto_approve);
+    const pending = (data.changes || []).filter(c => c.state === 'pending');
+    if (pending.length === 0) return;
+    const wrap = el('div', { class: 'pending-changes-wrap' });
+    for (const change of pending) {
+      renderDiffCard(wrap, change);
+    }
+    parent.appendChild(wrap);
+    scrollToBottom();
+  } catch (e) {
+    console.warn('failed to fetch pending changes', e);
+  }
 }
 
 function parseSSE(raw) {
@@ -2048,11 +2384,18 @@ function handleEvent(ev, ctx) {
     ctx.statsEl.innerHTML = '';
     ctx.statsEl.appendChild(el('span', { text: 'steps: ' + d.steps }));
     ctx.statsEl.appendChild(el('span', { text: 'tokens: ' + d.tokens }));
+    if (d.compacted > 0) {
+      ctx.statsEl.appendChild(el('span', { text: 'compacted ' + d.compacted + ' msgs' }));
+    }
     if (d.forced_final) {
       ctx.statsEl.appendChild(el('span', { class: 'warn', text: 'forced final (guardrail)' }));
     }
     if (d.hit_limit) {
       ctx.statsEl.appendChild(el('span', { class: 'warn', text: 'warning: hit iteration limit' }));
+    }
+    // Render pending change diff cards if review mode is active.
+    if (d.pending_count > 0) {
+      fetchAndRenderPendingChanges(ctx.assistantTurn);
     }
     refreshRunsPanel();
     loadSessionList();
@@ -2192,6 +2535,25 @@ if (fastModeEl) {
     }
   });
 }
+// ---- auto-approve toggle ----
+if (autoApproveEl) {
+  autoApproveEl.addEventListener('change', async () => {
+    if (autoApproveLabelEl) autoApproveLabelEl.classList.toggle('active', !autoApproveEl.checked);
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/sessions/${sessionId}/auto-approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: autoApproveEl.checked }),
+      });
+    } catch (e) { console.warn('auto-approve toggle failed', e); }
+  });
+}
+function syncAutoApproveUI(enabled) {
+  if (autoApproveEl) autoApproveEl.checked = enabled;
+  if (autoApproveLabelEl) autoApproveLabelEl.classList.toggle('active', !enabled);
+}
+
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
