@@ -1,0 +1,35 @@
+# Codesmith — docker-compose for local development.
+#
+# Usage:
+#   docker compose up --build
+#
+# Prerequisites:
+#   - Copy config.example.yaml to config.yaml and adjust
+#   - Create .env with your API keys (ANTHROPIC_API_KEY, etc.)
+#   - Build the sandbox image first:
+#       docker build -t codesmith-sandbox:latest -f docker/sandbox.Dockerfile docker/
+
+services:
+  codesmith:
+    build: .
+    ports:
+      - "8111:8111"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - codesmith-data:/data
+      # Docker socket for sandbox execution
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
+    environment:
+      - CODESMITH_CONFIG=/app/config.yaml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8111/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  codesmith-data:

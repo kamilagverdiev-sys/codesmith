@@ -34,6 +34,244 @@
   }
   body { display: flex; flex-direction: column; height: 100vh; }
 
+  .app {
+    flex: 1 1 auto;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ---- Sidebar (session list) ---- */
+  .sidebar {
+    width: 260px;
+    flex: 0 0 260px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.18s ease, flex-basis 0.18s ease;
+  }
+  .sidebar.collapsed {
+    width: 0;
+    flex-basis: 0;
+    border-right-width: 0;
+  }
+  .sidebar-head {
+    flex: 0 0 auto;
+    padding: 12px 14px 8px 14px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sidebar-head input {
+    flex: 1;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .sidebar-head input:focus { border-color: var(--accent); }
+  .sidebar-head .new-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    font-weight: 600;
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex: 0 0 auto;
+  }
+  .sidebar-head .new-btn:hover { opacity: 0.88; }
+  .sidebar-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .sidebar-empty {
+    color: var(--fg-faint);
+    font-size: 11px;
+    padding: 18px 14px;
+    text-align: center;
+  }
+  .session-item {
+    padding: 9px 14px;
+    margin: 2px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.12s;
+    border: 1px solid transparent;
+  }
+  .session-item:hover { background: var(--bg-3); }
+  .session-item.active {
+    background: var(--bg-3);
+    border-color: var(--accent);
+  }
+  .session-item .title {
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .session-item .meta {
+    display: flex;
+    justify-content: space-between;
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-size: 10px;
+    margin-top: 4px;
+  }
+  .session-item .meta .profile { color: var(--tool); }
+  .sidebar-toggle {
+    position: fixed;
+    top: 60px;
+    left: 14px;
+    z-index: 20;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+  }
+  .sidebar.collapsed ~ .main-wrap .sidebar-toggle,
+  .sidebar.collapsed + .sidebar-toggle { display: flex; }
+  .sidebar-toggle:hover { color: var(--fg); border-color: var(--accent); }
+
+  .main-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---- Header extras ---- */
+  .fast-mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .fast-mode input { accent-color: var(--yellow); }
+  .fast-mode.active { color: var(--yellow); }
+
+  .activity {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg-faint);
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .activity .num { color: var(--fg); font-weight: 500; }
+  .activity .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--fg-faint);
+  }
+  .activity.hot .dot { background: var(--green); box-shadow: 0 0 6px rgba(158,206,106,0.6); }
+
+  /* ---- Command palette ---- */
+  .palette-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    z-index: 30;
+    padding-top: 15vh;
+  }
+  .palette-backdrop.open { display: flex; }
+  .palette {
+    width: 520px;
+    max-width: 90vw;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    overflow: hidden;
+    max-height: 60vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .palette input {
+    background: var(--bg);
+    color: var(--fg);
+    border: none;
+    border-bottom: 1px solid var(--line);
+    padding: 14px 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+  }
+  .palette-body {
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .palette-item {
+    padding: 9px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    color: var(--fg-dim);
+    font-size: 12px;
+  }
+  .palette-item .kind {
+    color: var(--fg-faint);
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .palette-item.focused,
+  .palette-item:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+  .palette-empty {
+    color: var(--fg-faint);
+    padding: 14px 16px;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  /* ---- Syntax highlighting (hand-rolled, no CDN) ---- */
+  .bubble .md pre code .k { color: #bb9af7; }     /* keyword */
+  .bubble .md pre code .s { color: #9ece6a; }     /* string */
+  .bubble .md pre code .c { color: #5c6773; font-style: italic; }  /* comment */
+  .bubble .md pre code .n { color: #e0af68; }     /* number */
+  .bubble .md pre code .t { color: #7dcfff; }     /* type */
+  .bubble .md pre code .f { color: #7aa2f7; }     /* function / builtin */
+
   header {
     display: flex;
     align-items: center;
@@ -110,7 +348,11 @@
   main {
     flex: 1 1 auto;
     overflow-y: auto;
-    padding: 24px max(20px, calc((100vw - 880px) / 2));
+    padding: 24px max(20px, calc((100% - 820px) / 2));
+    min-height: 0;
+  }
+  .main-wrap > footer {
+    flex: 0 0 auto;
   }
   .empty {
     color: var(--fg-faint);
@@ -239,6 +481,104 @@
   }
   .copy-btn:hover { color: var(--fg); border-color: var(--accent); }
   .copy-btn.done { color: var(--green); border-color: var(--green); }
+
+  /* Runs panel — observability tail, only visible in debug mode */
+  .runs-panel {
+    position: fixed;
+    right: 20px;
+    bottom: 110px;
+    width: 320px;
+    max-height: 360px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 10;
+  }
+  .runs-panel.visible { display: flex; }
+  .runs-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-3);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .runs-head .refresh {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    padding: 2px 8px;
+    font-size: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--mono);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .runs-head .refresh:hover { color: var(--fg); border-color: var(--accent); }
+  .runs-body {
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .run-item {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--fg-dim);
+  }
+  .run-item:last-child { border-bottom: none; }
+  .run-item .top {
+    display: flex;
+    justify-content: space-between;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .run-item .top .flag {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .run-item .top .flag.ok { background: rgba(158,206,106,0.12); color: var(--green); }
+  .run-item .top .flag.err { background: rgba(247,118,142,0.12); color: var(--red); }
+  .run-item .top .flag.forced { background: rgba(224,175,104,0.12); color: var(--yellow); }
+  .run-item .stats {
+    display: flex;
+    gap: 10px;
+    color: var(--fg-faint);
+    font-size: 10px;
+    margin-top: 2px;
+  }
+  .run-item .msg {
+    margin-top: 3px;
+    color: var(--fg-faint);
+    font-family: var(--sans);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+  }
+  .runs-empty {
+    color: var(--fg-faint);
+    text-align: center;
+    padding: 20px 12px;
+    font-size: 11px;
+  }
 
   .step {
     margin-top: 12px;
@@ -412,6 +752,250 @@
   }
   .send:hover { opacity: 0.85; }
   .send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .plan-btn {
+    background: transparent;
+    color: var(--accent-2);
+    border: 1px solid var(--accent-2);
+    padding: 0 16px;
+    height: 44px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    flex: 0 0 auto;
+    transition: all 0.15s;
+  }
+  .plan-btn:hover { background: rgba(187,154,247,0.1); }
+  .plan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .solve-btn {
+    background: transparent;
+    color: var(--green);
+    border: 1px solid var(--green);
+    padding: 0 16px;
+    height: 44px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    flex: 0 0 auto;
+    transition: all 0.15s;
+  }
+  .solve-btn:hover { background: rgba(158,206,106,0.1); }
+  .solve-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .review-btn {
+    background: transparent;
+    color: var(--yellow);
+    border: 1px solid var(--yellow);
+    padding: 0 16px;
+    height: 44px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    flex: 0 0 auto;
+    transition: all 0.15s;
+  }
+  .review-btn:hover { background: rgba(224,175,104,0.1); }
+  .review-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ---- Review verdict card ---- */
+  .review-card {
+    background: linear-gradient(180deg, rgba(224,175,104,0.08), rgba(224,175,104,0.02));
+    border: 1px solid rgba(224,175,104,0.35);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 28px;
+  }
+  .review-card.verdict-approve { border-color: rgba(158,206,106,0.5); background: linear-gradient(180deg, rgba(158,206,106,0.08), rgba(158,206,106,0.02)); }
+  .review-card.verdict-request-changes { border-color: rgba(247,118,142,0.5); background: linear-gradient(180deg, rgba(247,118,142,0.08), rgba(247,118,142,0.02)); }
+  .review-card .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .review-card .head .verdict {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .review-card .head .verdict.approve { background: rgba(158,206,106,0.2); color: var(--green); }
+  .review-card .head .verdict.nits { background: rgba(224,175,104,0.2); color: var(--yellow); }
+  .review-card .head .verdict.changes { background: rgba(247,118,142,0.2); color: var(--red); }
+  .review-card .head .verdict.unknown { background: rgba(139,152,168,0.2); color: var(--fg-dim); }
+  .review-card .head .meta {
+    color: var(--fg-faint);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 10px;
+  }
+  .review-card .body {
+    color: var(--fg);
+    line-height: 1.55;
+  }
+
+  /* ---- Architect plan card ---- */
+  .plan-card {
+    background: linear-gradient(180deg, rgba(187,154,247,0.08), rgba(187,154,247,0.02));
+    border: 1px solid rgba(187,154,247,0.35);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 28px;
+  }
+  .plan-card .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    color: var(--accent-2);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .plan-card .head .meta {
+    color: var(--fg-faint);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 10px;
+  }
+  .plan-card .body {
+    color: var(--fg);
+    line-height: 1.55;
+  }
+  .plan-card .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(187,154,247,0.2);
+  }
+  .plan-card .actions button {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    padding: 6px 14px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--mono);
+    transition: all 0.15s;
+  }
+  .plan-card .actions button:hover { color: var(--fg); border-color: var(--accent); }
+  .plan-card .actions .accept {
+    color: var(--accent-2);
+    border-color: var(--accent-2);
+  }
+  .plan-card .actions .accept:hover { background: rgba(187,154,247,0.1); }
+
+  /* ---- Auto-approve toggle (header) ---- */
+  .auto-approve-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-dim);
+    font-size: 11px;
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .auto-approve-toggle input { accent-color: var(--green); }
+  .auto-approve-toggle.active { color: var(--green); }
+
+  /* ---- Pending change diff card ---- */
+  .diff-card {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    margin-top: 12px;
+    overflow: hidden;
+    transition: border-color 0.3s, opacity 0.3s;
+  }
+  .diff-card .diff-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--bg-3);
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .diff-card .diff-head .kind {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--yellow);
+  }
+  .diff-card .diff-head .path {
+    color: var(--accent);
+    margin-left: 10px;
+  }
+  .diff-card .diff-head .state-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .diff-card .diff-head .state-badge.pending { background: rgba(224,175,104,0.15); color: var(--yellow); }
+  .diff-card .diff-head .state-badge.applied { background: rgba(158,206,106,0.15); color: var(--green); }
+  .diff-card .diff-head .state-badge.rejected { background: rgba(247,118,142,0.15); color: var(--red); }
+
+  .diff-card .diff-body {
+    padding: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .diff-card .diff-body .diff-line {
+    padding: 1px 14px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .diff-card .diff-body .diff-line.add { background: rgba(158,206,106,0.1); color: var(--green); }
+  .diff-card .diff-body .diff-line.del { background: rgba(247,118,142,0.08); color: var(--red); }
+  .diff-card .diff-body .diff-line.hunk { color: var(--accent); background: rgba(122,162,247,0.06); }
+  .diff-card .diff-body .diff-line.ctx { color: var(--fg-dim); }
+
+  .diff-card .diff-actions {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+  }
+  .diff-card .diff-actions button {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--fg-dim);
+    padding: 5px 14px;
+    font-size: 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: var(--mono);
+    transition: all 0.15s;
+  }
+  .diff-card .diff-actions .approve-btn {
+    color: var(--green);
+    border-color: var(--green);
+  }
+  .diff-card .diff-actions .approve-btn:hover { background: rgba(158,206,106,0.1); }
+  .diff-card .diff-actions .reject-btn {
+    color: var(--red);
+    border-color: var(--red);
+  }
+  .diff-card .diff-actions .reject-btn:hover { background: rgba(247,118,142,0.08); }
+
+  .diff-card.resolved { opacity: 0.6; }
+  .diff-card.resolved .diff-actions { display: none; }
+  .diff-card.state-applied { border-color: var(--green); }
+  .diff-card.state-rejected { border-color: var(--red); }
+
   .hint {
     color: var(--fg-faint);
     font-size: 11px;
@@ -419,12 +1003,94 @@
     margin-top: 6px;
     text-align: right;
   }
+
+  /* ---- Toast notifications ---- */
+  .toast-container {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    max-width: 360px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    animation: toast-in 0.25s ease-out, toast-out 0.3s ease-in 3.7s forwards;
+    cursor: pointer;
+  }
+  .toast.warn { border-color: var(--yellow); color: var(--yellow); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes toast-out {
+    from { opacity: 1; }
+    to   { opacity: 0; transform: translateY(-8px); }
+  }
+
+  /* ---- Loading spinner on buttons ---- */
+  .btn-loading {
+    position: relative;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+  .btn-loading::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    margin-top: -6px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ---- Mobile breakpoint ---- */
+  @media (max-width: 768px) {
+    .sidebar {
+      position: fixed;
+      left: 0; top: 0; bottom: 0;
+      z-index: 100;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sidebar:not(.collapsed) {
+      transform: translateX(0);
+    }
+    .sidebar.collapsed {
+      transform: translateX(-100%);
+    }
+    .main-wrap { width: 100% !important; }
+    .chat { padding: 16px 12px; }
+    footer.compose { padding: 10px 12px; }
+    .compose .row { gap: 6px; }
+  }
 </style>
 </head>
 <body>
+<div class="toast-container" id="toast-container"></div>
 
 <header>
   <div class="brand">
+    <button id="sidebar-toggle-inline" class="sidebar-toggle-inline" title="Toggle session list" style="background:transparent;border:1px solid var(--line);color:var(--fg-dim);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:13px;margin-right:4px;">☰</button>
     <span class="dot" id="status-dot" title="api status"></span>
     <span>codesmith</span>
     <span style="color: var(--fg-faint); font-weight: 400;">- hybrid coder agent</span>
@@ -433,6 +1099,20 @@
     <span>loading...</span>
   </div>
   <div class="controls">
+    <div class="activity" id="activity" title="Runs today · avg duration of last 5">
+      <span class="dot"></span>
+      <span><span class="num" id="activity-count">0</span> runs</span>
+      <span>·</span>
+      <span class="num" id="activity-avg">—</span>
+    </div>
+    <label class="fast-mode" id="fast-mode-label" title="Force the fast local profile (Qwen 2.5 Coder 7B) on top of whatever is selected">
+      <input type="checkbox" id="fast-mode" />
+      <span>fast</span>
+    </label>
+    <label class="auto-approve-toggle" id="auto-approve-label" title="When off, file edits require manual approval before writing to disk">
+      <input type="checkbox" id="auto-approve" checked />
+      <span>auto-approve</span>
+    </label>
     <label class="toggle" title="Show internal tool steps and debug trace">
       <input type="checkbox" id="debug-steps" />
       <span>debug</span>
@@ -447,29 +1127,64 @@
   </div>
 </header>
 
-<main id="chat">
-  <div class="empty" id="empty">
-    <h1>codesmith</h1>
-    <div>Ask for code, debugging, or a quick explanation and the agent will handle the rest.</div>
-    <div class="examples">
-      <button data-prompt="Write a Fibonacci function in Python and verify it for n=10.">fib(10)</button>
-      <button data-prompt="Create hello.py with print('hi') and run it.">create + run hello.py</button>
-      <button data-prompt="How many prime numbers are between 1 and 1000? Count them in the sandbox.">primes <= 1000</button>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <input type="search" id="sidebar-search" placeholder="filter sessions..." />
+      <button class="new-btn" id="sidebar-new" title="Start a fresh session">+ new</button>
     </div>
-  </div>
-</main>
+    <div class="sidebar-body" id="sidebar-body">
+      <div class="sidebar-empty">loading…</div>
+    </div>
+  </aside>
 
-<footer>
-  <div class="input-row">
-    <textarea
-      id="input"
-      placeholder="Type a message... (Ctrl+Enter to send)"
-      rows="2"
-    ></textarea>
-    <button class="send" id="send">Send</button>
+  <div class="main-wrap">
+    <main id="chat">
+      <div class="empty" id="empty">
+        <h1>codesmith</h1>
+        <div>Ask for code, debugging, or a quick explanation and the agent will handle the rest.</div>
+        <div class="examples">
+          <button data-prompt="Write a Fibonacci function in Python and verify it for n=10.">fib(10)</button>
+          <button data-prompt="Create hello.py with print('hi') and run it.">create + run hello.py</button>
+          <button data-prompt="How many prime numbers are between 1 and 1000? Count them in the sandbox.">primes <= 1000</button>
+          <button data-prompt="Show me the workspace tree, then grep for all TODO comments.">explore the workspace</button>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <div class="input-row">
+        <textarea
+          id="input"
+          placeholder="Type a message... (Ctrl+Enter to send · Ctrl+Shift+Enter to plan)"
+          rows="2"
+        ></textarea>
+        <button class="plan-btn" id="plan" title="Ask the architect persona to produce an executable plan without touching files">Plan</button>
+        <button class="review-btn" id="review" title="Review last changes using the REVIEWER persona — paste a diff or auto-use pending changes">Review</button>
+        <button class="solve-btn" id="solve" title="Run with self-repair loop — retries on failure until the code works">Solve</button>
+        <button class="send" id="send">Send</button>
+      </div>
+      <div class="hint">Ctrl+Enter - send · Ctrl+Shift+Enter - plan · Ctrl+Shift+S - solve · Ctrl+Shift+R - review · Esc - cancel · Ctrl+K - palette</div>
+    </footer>
   </div>
-  <div class="hint">Ctrl+Enter - send · Esc - cancel · sandbox: docker, network=none</div>
-</footer>
+</div>
+
+<aside class="runs-panel" id="runs-panel">
+  <div class="runs-head">
+    <span>recent runs</span>
+    <button class="refresh" id="runs-refresh" title="Reload runs">refresh</button>
+  </div>
+  <div class="runs-body" id="runs-body">
+    <div class="runs-empty">loading…</div>
+  </div>
+</aside>
+
+<div class="palette-backdrop" id="palette-backdrop">
+  <div class="palette">
+    <input type="text" id="palette-input" placeholder="Search profiles, sessions, commands..." autocomplete="off" />
+    <div class="palette-body" id="palette-body"></div>
+  </div>
+</div>
 
 <script>
 const $ = (sel) => document.querySelector(sel);
@@ -477,20 +1192,49 @@ const chatEl = $('#chat');
 const emptyEl = $('#empty');
 const inputEl = $('#input');
 const sendBtn = $('#send');
+const planBtn = $('#plan');
+const solveBtn = $('#solve');
+const reviewBtn = $('#review');
 const statusDot = $('#status-dot');
 const metaEl = $('#meta');
 const newSessionBtn = $('#new-session');
 const modelProfileEl = $('#model-profile');
 const modelStatusEl = $('#model-status');
 const debugStepsEl = $('#debug-steps');
+const runsPanelEl = $('#runs-panel');
+const runsBodyEl = $('#runs-body');
+const runsRefreshBtn = $('#runs-refresh');
+const sidebarEl = $('#sidebar');
+const sidebarBodyEl = $('#sidebar-body');
+const sidebarSearchEl = $('#sidebar-search');
+const sidebarNewBtn = $('#sidebar-new');
+const sidebarToggleBtn = $('#sidebar-toggle-inline');
+const fastModeEl = $('#fast-mode');
+const fastModeLabelEl = $('#fast-mode-label');
+const autoApproveEl = $('#auto-approve');
+const autoApproveLabelEl = $('#auto-approve-label');
+const activityEl = $('#activity');
+const activityCountEl = $('#activity-count');
+const activityAvgEl = $('#activity-avg');
+const paletteBackdropEl = $('#palette-backdrop');
+const paletteInputEl = $('#palette-input');
+const paletteBodyEl = $('#palette-body');
 
 let sessionId = null;
 let inflight = null; // { abort: () => void }
 let currentProfileKey = null;
 let modelProfiles = [];
+let sessionList = [];
+let sessionListFilter = '';
+let runStats = { count: 0, avgMs: null, last: 0 };
+let paletteFocus = 0;
+let paletteItems = [];
 
 const DEBUG_STORAGE_KEY = 'codesmith.debugSteps';
 const PROFILE_STORAGE_KEY = 'codesmith.modelProfile';
+const SESSION_STORAGE_KEY = 'codesmith.sessionId';
+const FAST_MODE_STORAGE_KEY = 'codesmith.fastMode';
+const SIDEBAR_STORAGE_KEY = 'codesmith.sidebarHidden';
 
 // ---- helpers ----
 function el(tag, attrs = {}, ...children) {
@@ -519,6 +1263,14 @@ function scrollToBottom() {
 function shortArgs(keys) {
   if (!keys || keys.length === 0) return '()';
   return '(' + keys.join(', ') + ')';
+}
+
+function toast(msg, level = 'info') {
+  const container = document.getElementById('toast-container');
+  const t = el('div', { class: 'toast' + (level !== 'info' ? ' ' + level : ''), text: msg });
+  t.addEventListener('click', () => t.remove());
+  container.appendChild(t);
+  setTimeout(() => t.remove(), 4200);
 }
 
 // ---- safe markdown-light renderer ----
@@ -558,7 +1310,13 @@ function renderMarkdownInto(container, text) {
         pre.appendChild(tag);
       }
       const codeEl = document.createElement('code');
-      codeEl.textContent = part.body.replace(/\n$/, '');
+      const body = part.body.replace(/\n$/, '');
+      const highlighted = highlightCode(part.lang, body);
+      if (highlighted) {
+        codeEl.appendChild(highlighted);
+      } else {
+        codeEl.textContent = body;
+      }
       pre.appendChild(codeEl);
       container.appendChild(pre);
       continue;
@@ -637,6 +1395,417 @@ function appendInline(parent, text) {
   }
   if (lastIdx < text.length) {
     parent.appendChild(document.createTextNode(text.slice(lastIdx)));
+  }
+}
+
+// ---- Fast mode (force local-fast override) ----
+function fastModeActive() {
+  return !!(fastModeEl && fastModeEl.checked);
+}
+function currentEffectiveProfile() {
+  // Fast mode wins over the selected profile: if the user ticked it,
+  // every new turn goes through local-fast regardless of the <select>.
+  if (fastModeActive()) return 'local-fast';
+  return currentModelProfile();
+}
+
+// ---- Activity counter (runs today + avg duration of last 5) ----
+function updateActivityCounter(runs) {
+  if (!activityEl || !activityCountEl || !activityAvgEl) return;
+  const today = new Date();
+  const ymd = today.toISOString().slice(0, 10);
+  let todayCount = 0;
+  const durations = [];
+  for (const r of runs || []) {
+    if ((r.ts || '').slice(0, 10) === ymd) todayCount++;
+    if (typeof r.duration_ms === 'number' && r.duration_ms > 0) {
+      durations.push(r.duration_ms);
+    }
+    if (durations.length >= 5) break;
+  }
+  activityCountEl.textContent = String(todayCount);
+  if (durations.length === 0) {
+    activityAvgEl.textContent = '—';
+  } else {
+    const avg = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
+    activityAvgEl.textContent = (avg >= 1000 ? (avg / 1000).toFixed(1) + 's' : avg + 'ms') + ' avg';
+  }
+  runStats = { count: todayCount, avgMs: durations.length ? durations[0] : null, last: Date.now() };
+  if (todayCount > 0 && Date.now() - (runStats.last || 0) < 60000) {
+    activityEl.classList.add('hot');
+  }
+}
+
+// ---- Sidebar (session list) ----
+function relativeTime(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '';
+  const delta = (Date.now() - t) / 1000;
+  if (delta < 60) return 'just now';
+  if (delta < 3600) return Math.round(delta / 60) + 'm';
+  if (delta < 86400) return Math.round(delta / 3600) + 'h';
+  return Math.round(delta / 86400) + 'd';
+}
+
+async function loadSessionList() {
+  if (!sidebarBodyEl) return;
+  try {
+    const r = await fetch('/api/sessions?limit=50');
+    if (!r.ok) throw new Error('sessions fetch failed: ' + r.status);
+    sessionList = await r.json();
+  } catch (e) {
+    sidebarBodyEl.innerHTML = '';
+    sidebarBodyEl.appendChild(el('div', { class: 'sidebar-empty', text: 'failed to load: ' + e.message }));
+    return;
+  }
+  renderSessionList();
+}
+
+function renderSessionList() {
+  if (!sidebarBodyEl) return;
+  sidebarBodyEl.innerHTML = '';
+  const filter = (sessionListFilter || '').toLowerCase().trim();
+  const visible = filter
+    ? sessionList.filter(s =>
+        (s.title || '').toLowerCase().includes(filter) ||
+        (s.model_profile || '').toLowerCase().includes(filter) ||
+        (s.session_id || '').toLowerCase().includes(filter))
+    : sessionList;
+  if (visible.length === 0) {
+    sidebarBodyEl.appendChild(el('div', {
+      class: 'sidebar-empty',
+      text: filter ? 'no matches' : '(no sessions yet — start chatting)',
+    }));
+    return;
+  }
+  for (const s of visible) {
+    const item = el('div', { class: 'session-item' + (s.session_id === sessionId ? ' active' : '') });
+    item.appendChild(el('div', { class: 'title', text: s.title || s.session_id }));
+    const meta = el('div', { class: 'meta' });
+    meta.appendChild(el('span', { class: 'profile', text: s.model_profile || '—' }));
+    meta.appendChild(el('span', { text: relativeTime(s.updated_at) + ' · ' + (s.messages || 0) + 'm' }));
+    item.appendChild(meta);
+    item.addEventListener('click', () => switchSession(s.session_id));
+    sidebarBodyEl.appendChild(item);
+  }
+}
+
+async function switchSession(targetId) {
+  if (!targetId || targetId === sessionId) return;
+  if (inflight) await abortInflight();
+  sessionId = targetId;
+  localStorage.setItem(SESSION_STORAGE_KEY, targetId);
+  chatEl.innerHTML = '';
+  // Fetch and render history.
+  try {
+    const r = await fetch('/api/sessions/' + targetId + '/messages');
+    if (!r.ok) throw new Error('history fetch failed: ' + r.status);
+    const payload = await r.json();
+    if (payload.model_profile && modelProfileEl) {
+      const option = Array.from(modelProfileEl.options).find(o => o.value === payload.model_profile);
+      if (option) {
+        modelProfileEl.value = payload.model_profile;
+        currentProfileKey = payload.model_profile;
+        updateModelStatus();
+      }
+    }
+    renderHistory(payload.messages || []);
+    // Sync auto-approve toggle with session state.
+    try {
+      const pcResp = await fetch('/api/sessions/' + targetId + '/pending-changes');
+      if (pcResp.ok) {
+        const pcData = await pcResp.json();
+        syncAutoApproveUI(pcData.auto_approve);
+      }
+    } catch {}
+  } catch (e) {
+    showError('Failed to load session: ' + e.message);
+  }
+  renderSessionList();
+}
+
+function toggleSidebar() {
+  if (!sidebarEl) return;
+  sidebarEl.classList.toggle('collapsed');
+  localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarEl.classList.contains('collapsed') ? 'true' : 'false');
+}
+
+// ---- Command palette (Ctrl+K) ----
+function buildPaletteItems() {
+  const items = [];
+  for (const p of modelProfiles || []) {
+    items.push({
+      kind: 'profile',
+      label: p.label + ' — ' + p.primary_model,
+      hint: p.available ? 'ready' : 'needs setup',
+      action: () => {
+        if (modelProfileEl) {
+          modelProfileEl.value = p.key;
+          modelProfileEl.dispatchEvent(new Event('change'));
+        }
+      },
+    });
+  }
+  for (const s of sessionList.slice(0, 15)) {
+    items.push({
+      kind: 'session',
+      label: s.title || s.session_id,
+      hint: relativeTime(s.updated_at),
+      action: () => switchSession(s.session_id),
+    });
+  }
+  items.push({
+    kind: 'command',
+    label: 'New session',
+    hint: 'drop current',
+    action: async () => {
+      if (inflight) await abortInflight();
+      await dropSession();
+      chatEl.innerHTML = '';
+      chatEl.appendChild(emptyEl);
+      inputEl.focus();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Architect: plan current input',
+    hint: 'ctrl+shift+enter',
+    action: () => {
+      if (!inputEl.value.trim()) {
+        inputEl.focus();
+        return;
+      }
+      runPlan();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Solver: self-repair current input',
+    hint: 'ctrl+shift+s',
+    action: () => {
+      if (!inputEl.value.trim()) {
+        inputEl.focus();
+        return;
+      }
+      runSolve();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Reviewer: review diff in input',
+    hint: 'ctrl+shift+r',
+    action: () => {
+      if (!inputEl.value.trim()) {
+        inputEl.focus();
+        return;
+      }
+      runReview();
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: fastModeActive() ? 'Disable fast mode' : 'Enable fast mode',
+    hint: 'local-fast override',
+    action: () => {
+      if (!fastModeEl) return;
+      fastModeEl.checked = !fastModeEl.checked;
+      fastModeEl.dispatchEvent(new Event('change'));
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: debugStepsEnabled() ? 'Hide debug panel' : 'Show debug panel',
+    hint: 'step trace + runs',
+    action: () => {
+      if (!debugStepsEl) return;
+      debugStepsEl.checked = !debugStepsEl.checked;
+      debugStepsEl.dispatchEvent(new Event('change'));
+    },
+  });
+  items.push({
+    kind: 'command',
+    label: 'Toggle sidebar',
+    hint: 'show / hide session list',
+    action: () => toggleSidebar(),
+  });
+  return items;
+}
+
+function openPalette() {
+  if (!paletteBackdropEl) return;
+  paletteItems = buildPaletteItems();
+  paletteFocus = 0;
+  paletteInputEl.value = '';
+  renderPalette('');
+  paletteBackdropEl.classList.add('open');
+  setTimeout(() => paletteInputEl.focus(), 10);
+}
+
+function closePalette() {
+  if (!paletteBackdropEl) return;
+  paletteBackdropEl.classList.remove('open');
+  inputEl.focus();
+}
+
+function renderPalette(filter) {
+  if (!paletteBodyEl) return;
+  const q = (filter || '').toLowerCase().trim();
+  const filtered = q
+    ? paletteItems.filter(i => i.label.toLowerCase().includes(q) || (i.hint || '').toLowerCase().includes(q))
+    : paletteItems;
+  paletteBodyEl.innerHTML = '';
+  if (filtered.length === 0) {
+    paletteBodyEl.appendChild(el('div', { class: 'palette-empty', text: 'no matches' }));
+    return;
+  }
+  paletteFocus = Math.min(paletteFocus, filtered.length - 1);
+  filtered.forEach((item, idx) => {
+    const row = el('div', { class: 'palette-item' + (idx === paletteFocus ? ' focused' : '') });
+    row.appendChild(el('span', { text: item.label }));
+    row.appendChild(el('span', { class: 'kind', text: item.kind + '  ·  ' + (item.hint || '') }));
+    row.addEventListener('click', () => {
+      closePalette();
+      item.action();
+    });
+    row.addEventListener('mouseenter', () => {
+      paletteFocus = idx;
+      renderPalette(paletteInputEl.value);
+    });
+    paletteBodyEl.appendChild(row);
+  });
+  paletteBodyEl._filtered = filtered;
+}
+
+function executePaletteFocused() {
+  const filtered = paletteBodyEl && paletteBodyEl._filtered;
+  if (!filtered || filtered.length === 0) return;
+  const item = filtered[Math.max(0, Math.min(paletteFocus, filtered.length - 1))];
+  if (!item) return;
+  closePalette();
+  item.action();
+}
+
+// ---- Naive syntax highlighter (no CDN) ----
+const _PY_KEYWORDS = new Set(('False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield').split(' '));
+const _JS_KEYWORDS = new Set(('await break case catch class const continue debugger default delete do else enum export extends false finally for from function if import in instanceof let new null of return static super switch this throw true try typeof var void while with yield async').split(' '));
+const _SH_KEYWORDS = new Set(('if then else elif fi for while do done case esac in function return export local read set unset source echo cd mkdir rm cp mv ls cat grep').split(' '));
+
+function highlightCode(lang, source) {
+  const language = (lang || '').toLowerCase();
+  const isPy = language === 'py' || language === 'python';
+  const isJs = language === 'js' || language === 'javascript' || language === 'ts' || language === 'typescript' || language === 'tsx' || language === 'jsx';
+  const isSh = language === 'sh' || language === 'bash' || language === 'shell' || language === 'zsh';
+  const isJson = language === 'json';
+  if (!isPy && !isJs && !isSh && !isJson) return null;
+
+  const frag = document.createDocumentFragment();
+  const kws = isPy ? _PY_KEYWORDS : (isJs ? _JS_KEYWORDS : (isSh ? _SH_KEYWORDS : null));
+
+  // Token regex: comments / strings / numbers / identifiers / whitespace / anything-else
+  const re = /(#[^\n]*|\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|(\s+)|([\s\S])/g;
+  let m;
+  while ((m = re.exec(source)) !== null) {
+    const [, comment, str, num, ident, ws, other] = m;
+    if (comment !== undefined) {
+      frag.appendChild(makeSpan('c', comment));
+    } else if (str !== undefined) {
+      frag.appendChild(makeSpan('s', str));
+    } else if (num !== undefined) {
+      frag.appendChild(makeSpan('n', num));
+    } else if (ident !== undefined) {
+      if (kws && kws.has(ident)) {
+        frag.appendChild(makeSpan('k', ident));
+      } else if (isPy && /^(print|len|range|open|int|str|float|bool|list|dict|set|tuple)$/.test(ident)) {
+        frag.appendChild(makeSpan('f', ident));
+      } else if (isJs && /^(console|Math|JSON|Object|Array|Promise|Date|Number|String)$/.test(ident)) {
+        frag.appendChild(makeSpan('t', ident));
+      } else {
+        frag.appendChild(document.createTextNode(ident));
+      }
+    } else if (ws !== undefined) {
+      frag.appendChild(document.createTextNode(ws));
+    } else {
+      frag.appendChild(document.createTextNode(other));
+    }
+  }
+  return frag;
+}
+
+function makeSpan(cls, text) {
+  const s = document.createElement('span');
+  s.className = cls;
+  s.textContent = text;
+  return s;
+}
+
+async function refreshRunsPanel(forceActivityOnly = false) {
+  // Always refresh the activity counter in the header (cheap call).
+  try {
+    const r = await fetch('/api/runs?limit=20');
+    if (r.ok) {
+      const payload = await r.json();
+      updateActivityCounter(payload.runs || []);
+      if (debugStepsEnabled() && !forceActivityOnly) {
+        renderRuns(payload.runs || []);
+      }
+      return;
+    }
+    if (!debugStepsEnabled()) return;
+    throw new Error('runs fetch failed: ' + r.status);
+  } catch (e) {
+    if (runsBodyEl && debugStepsEnabled()) {
+      runsBodyEl.innerHTML = '';
+      runsBodyEl.appendChild(el('div', { class: 'runs-empty', text: 'failed to load: ' + e.message }));
+    }
+  }
+}
+
+function renderRuns(runs) {
+  if (!runsBodyEl) return;
+  runsBodyEl.innerHTML = '';
+  if (!runs || runs.length === 0) {
+    runsBodyEl.appendChild(el('div', { class: 'runs-empty', text: '(no runs logged yet)' }));
+    return;
+  }
+  for (const r of runs) {
+    const item = el('div', { class: 'run-item' });
+
+    // Top line: short timestamp + profile + flag badge
+    const tsShort = (r.ts || '').slice(11, 19) || (r.ts || '').slice(0, 10);
+    const flagCls = r.error ? 'err' : (r.forced_final ? 'forced' : 'ok');
+    const flagText = r.error ? 'error' : (r.forced_final ? 'forced' : 'ok');
+    const top = el('div', { class: 'top' },
+      el('span', { text: tsShort + '  ' + (r.profile || '-') }),
+      el('span', { class: 'flag ' + flagCls, text: flagText })
+    );
+    item.appendChild(top);
+
+    // Model + stats line
+    const modelLine = (r.provider || '') + '/' + (r.model || '');
+    item.appendChild(el('div', { class: 'stats' },
+      el('span', { text: modelLine }),
+      el('span', { text: 'steps:' + (r.steps || 0) }),
+      el('span', { text: 'tok:' + (r.tokens || 0) }),
+      el('span', { text: (r.duration_ms || 0) + 'ms' })
+    ));
+
+    if (r.error) {
+      item.appendChild(el('div', { class: 'msg', text: r.error }));
+    } else if (r.user_message) {
+      item.appendChild(el('div', { class: 'msg', text: r.user_message }));
+    }
+    runsBodyEl.appendChild(item);
+  }
+}
+
+function setRunsPanelVisible(visible) {
+  if (!runsPanelEl) return;
+  if (visible) {
+    runsPanelEl.classList.add('visible');
+    refreshRunsPanel();
+  } else {
+    runsPanelEl.classList.remove('visible');
   }
 }
 
@@ -719,11 +1888,12 @@ async function ensureSession() {
   const r = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model_profile: currentModelProfile() }),
+    body: JSON.stringify({ model_profile: currentEffectiveProfile() }),
   });
   if (!r.ok) throw new Error('failed to create session');
   const data = await r.json();
   sessionId = data.session_id;
+  localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
   currentProfileKey = data.model_profile || currentModelProfile();
   if (currentProfileKey && modelProfileEl) {
     modelProfileEl.value = currentProfileKey;
@@ -738,6 +1908,87 @@ async function dropSession() {
   try { await fetch('/api/sessions/' + sessionId, { method: 'DELETE' }); }
   catch (e) { /* ignore */ }
   sessionId = null;
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+async function abortInflight() {
+  if (!inflight) return;
+  try { inflight.abort(); } catch (e) { /* ignore */ }
+  if (sessionId) {
+    try {
+      await fetch('/api/sessions/' + sessionId + '/chat', { method: 'DELETE' });
+    } catch (e) { /* best-effort */ }
+  }
+}
+
+// ---- restore chat from persisted session ----
+async function restoreSession() {
+  const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+  if (!saved) return;
+  let payload;
+  try {
+    const r = await fetch('/api/sessions/' + saved + '/messages');
+    if (!r.ok) {
+      // Session is gone server-side (DB cleared, persistence disabled,
+      // etc.) — forget it locally too.
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return;
+    }
+    payload = await r.json();
+  } catch (e) {
+    return;
+  }
+  if (!payload || !Array.isArray(payload.messages) || payload.messages.length === 0) {
+    return;
+  }
+
+  sessionId = payload.session_id;
+  if (payload.model_profile && modelProfileEl) {
+    // Match the profile the session was last running on.
+    const option = Array.from(modelProfileEl.options).find(o => o.value === payload.model_profile);
+    if (option) {
+      modelProfileEl.value = payload.model_profile;
+      currentProfileKey = payload.model_profile;
+      updateModelStatus();
+    }
+  }
+  clearEmpty();
+  renderHistory(payload.messages);
+}
+
+function renderHistory(messages) {
+  let currentAssistant = null;
+  for (const m of messages) {
+    if (m.role === 'user') {
+      currentAssistant = null;
+      const turn = el('div', { class: 'turn user' },
+        el('div', { class: 'who', text: 'you' }),
+        el('div', { class: 'bubble', text: m.content || '' }),
+      );
+      chatEl.appendChild(turn);
+      continue;
+    }
+    if (m.role === 'assistant') {
+      // Only render assistant turns that carry final text; intermediate
+      // tool-calling-only assistant messages get collapsed into a step
+      // count in live mode and are not interesting on reload.
+      const text = (m.content || '').trim();
+      if (!text) continue;
+      const turn = el('div', { class: 'turn assistant' },
+        el('div', { class: 'who', text: 'codesmith' }),
+      );
+      const bubble = el('div', { class: 'bubble' });
+      renderMarkdownInto(bubble, text);
+      attachCopyButton(bubble, () => text);
+      turn.appendChild(bubble);
+      chatEl.appendChild(turn);
+      currentAssistant = turn;
+      continue;
+    }
+    // Skip `tool` and any other roles — they're internal and noisy
+    // when rendered as part of a transcript.
+  }
+  scrollToBottom();
 }
 
 // ---- info / health ----
@@ -764,6 +2015,7 @@ async function loadInfo() {
     statusDot.title = 'api unreachable';
     metaEl.innerHTML = '';
     metaEl.appendChild(el('span', { text: 'api unreachable' }));
+    toast('API unreachable — check that codesmith serve is running', 'warn');
   }
 }
 
@@ -777,12 +2029,14 @@ async function send() {
   inputEl.value = '';
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
+  sendBtn.classList.add('btn-loading');
 
   try {
     await ensureSession();
   } catch (e) {
     showError('Failed to create session: ' + e.message);
     sendBtn.disabled = false;
+    sendBtn.classList.remove('btn-loading');
     return;
   }
 
@@ -817,7 +2071,7 @@ async function send() {
     resp = await fetch('/api/sessions/' + sessionId + '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-      body: JSON.stringify({ message, model_profile: currentModelProfile() }),
+      body: JSON.stringify({ message, model_profile: currentEffectiveProfile() }),
       signal: controller.signal,
     });
   } catch (e) {
@@ -886,12 +2140,629 @@ async function send() {
     typingEl.remove();
     inflight = null;
     sendBtn.disabled = false;
+    sendBtn.classList.remove('btn-loading');
     inputEl.focus();
   }
 }
 
 function normalizeSSEBuffer(raw) {
   return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+// ---- Architect (plan) flow ----
+async function runPlan() {
+  const task = inputEl.value.trim();
+  if (!task) return;
+  if (inflight) return;
+
+  clearEmpty();
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  planBtn.disabled = true;
+  sendBtn.disabled = true;
+
+  try {
+    await ensureSession();
+  } catch (e) {
+    showError('Failed to create session: ' + e.message);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  // Render user turn framed as "plan request".
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → architect' }),
+      el('div', { class: 'bubble', text: task }),
+    )
+  );
+
+  // Shell for the architect response.
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / architect' }),
+  );
+  const typingEl = el('div', { class: 'typing', text: 'architect planning' });
+  assistantTurn.appendChild(typingEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task, model_profile: currentEffectiveProfile() }),
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Plan request failed: ' + e.message, assistantTurn);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  typingEl.remove();
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = await resp.json();
+      if (body && body.detail) detail = body.detail;
+    } catch (e) { /* ignore */ }
+    showError('Plan failed (' + resp.status + '): ' + detail, assistantTurn);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    showError('Plan parse failed: ' + e.message, assistantTurn);
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    return;
+  }
+
+  renderPlanCard(assistantTurn, data);
+  refreshRunsPanel();
+  loadSessionList();
+  planBtn.disabled = false;
+  sendBtn.disabled = false;
+  inputEl.focus();
+}
+
+async function executePlan(planText) {
+  if (!planText || !sessionId) return;
+  if (inflight) return;
+  sendBtn.disabled = true;
+  planBtn.disabled = true;
+
+  // Render a "coder executing" turn
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → coder' }),
+      el('div', { class: 'bubble', text: '▶ Execute plan' }),
+    )
+  );
+
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / coder' }),
+  );
+  const stepsContainer = el('div', { class: 'steps' });
+  const typingEl = el('div', { class: 'typing', text: 'coder executing plan' });
+  assistantTurn.appendChild(typingEl);
+  assistantTurn.appendChild(stepsContainer);
+  const finalBubble = el('div', { class: 'bubble', style: 'display: none;' });
+  assistantTurn.appendChild(finalBubble);
+  const statsEl = el('div', { class: 'stats', style: 'display: none;' });
+  assistantTurn.appendChild(statsEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  const controller = new AbortController();
+  inflight = { abort: () => controller.abort() };
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/execute-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({ plan_text: planText, model_profile: currentEffectiveProfile() }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Execute request failed: ' + e.message, assistantTurn);
+    inflight = null;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    return;
+  }
+
+  if (!resp.ok || !resp.body) {
+    typingEl.remove();
+    let detail = resp.statusText;
+    try { const b = await resp.json(); if (b && b.detail) detail = b.detail; } catch {}
+    showError('Execute failed (' + resp.status + '): ' + detail, assistantTurn);
+    inflight = null;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let sawTerminalEvent = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      buf = normalizeSSEBuffer(buf);
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const event = parseSSE(raw);
+        if (!event) continue;
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    buf += decoder.decode();
+    buf = normalizeSSEBuffer(buf);
+    if (buf.trim()) {
+      const event = parseSSE(buf);
+      if (event) {
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    if (!sawTerminalEvent) {
+      showError('Stream ended before a final answer arrived.', assistantTurn);
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      showError('Execute stream failed: ' + e.message, assistantTurn);
+    }
+  } finally {
+    typingEl.remove();
+    inflight = null;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+// ---- Solve (self-repair loop) flow ----
+async function runSolve() {
+  const task = inputEl.value.trim();
+  if (!task) return;
+  if (inflight) return;
+
+  clearEmpty();
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  solveBtn.disabled = true;
+  sendBtn.disabled = true;
+  planBtn.disabled = true;
+  reviewBtn.disabled = true;
+
+  try {
+    await ensureSession();
+  } catch (e) {
+    showError('Failed to create session: ' + e.message);
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    return;
+  }
+
+  // Render user turn.
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → solver' }),
+      el('div', { class: 'bubble', text: task }),
+    )
+  );
+
+  // Shell for the solver response.
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / solver' }),
+  );
+  const stepsContainer = el('div', { class: 'steps' });
+  const typingEl = el('div', { class: 'typing', text: 'solver working (self-repair loop)' });
+  assistantTurn.appendChild(typingEl);
+  assistantTurn.appendChild(stepsContainer);
+  const finalBubble = el('div', { class: 'bubble', style: 'display: none;' });
+  assistantTurn.appendChild(finalBubble);
+  const statsEl = el('div', { class: 'stats', style: 'display: none;' });
+  assistantTurn.appendChild(statsEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  const controller = new AbortController();
+  inflight = { abort: () => controller.abort() };
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/solve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({ task, max_attempts: 5, model_profile: currentEffectiveProfile() }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Solve request failed: ' + e.message, assistantTurn);
+    inflight = null;
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    return;
+  }
+
+  if (!resp.ok || !resp.body) {
+    typingEl.remove();
+    let detail = resp.statusText;
+    try { const b = await resp.json(); if (b && b.detail) detail = b.detail; } catch {}
+    showError('Solve failed (' + resp.status + '): ' + detail, assistantTurn);
+    inflight = null;
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    return;
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let sawTerminalEvent = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      buf = normalizeSSEBuffer(buf);
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const event = parseSSE(raw);
+        if (!event) continue;
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    buf += decoder.decode();
+    buf = normalizeSSEBuffer(buf);
+    if (buf.trim()) {
+      const event = parseSSE(buf);
+      if (event) {
+        handleEvent(event, { stepsContainer, typingEl, finalBubble, statsEl, assistantTurn });
+        if (event.event === 'final' || event.event === 'error') sawTerminalEvent = true;
+        scrollToBottom();
+      }
+    }
+    if (!sawTerminalEvent) {
+      showError('Stream ended before a final answer arrived.', assistantTurn);
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      showError('Solve stream failed: ' + e.message, assistantTurn);
+    }
+  } finally {
+    typingEl.remove();
+    inflight = null;
+    solveBtn.disabled = false;
+    sendBtn.disabled = false;
+    planBtn.disabled = false;
+    reviewBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+// ---- Review flow ----
+async function runReview() {
+  const diff = inputEl.value.trim();
+  if (!diff) return;
+  if (inflight) return;
+
+  clearEmpty();
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  reviewBtn.disabled = true;
+  planBtn.disabled = true;
+  sendBtn.disabled = true;
+  solveBtn.disabled = true;
+
+  try {
+    await ensureSession();
+  } catch (e) {
+    showError('Failed to create session: ' + e.message);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  // Render user turn.
+  chatEl.appendChild(
+    el('div', { class: 'turn user' },
+      el('div', { class: 'who', text: 'you → reviewer' }),
+      el('div', { class: 'bubble', text: diff.length > 400 ? diff.slice(0, 400) + '...' : diff }),
+    )
+  );
+
+  const assistantTurn = el('div', { class: 'turn assistant' },
+    el('div', { class: 'who', text: 'codesmith / reviewer' }),
+  );
+  const typingEl = el('div', { class: 'typing', text: 'reviewer analyzing diff' });
+  assistantTurn.appendChild(typingEl);
+  chatEl.appendChild(assistantTurn);
+  scrollToBottom();
+
+  let resp;
+  try {
+    resp = await fetch('/api/sessions/' + sessionId + '/review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ diff, model_profile: currentEffectiveProfile() }),
+    });
+  } catch (e) {
+    typingEl.remove();
+    showError('Review request failed: ' + e.message, assistantTurn);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  typingEl.remove();
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try { const body = await resp.json(); if (body && body.detail) detail = body.detail; } catch {}
+    showError('Review failed (' + resp.status + '): ' + detail, assistantTurn);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  let data;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    showError('Review parse failed: ' + e.message, assistantTurn);
+    reviewBtn.disabled = false;
+    planBtn.disabled = false;
+    sendBtn.disabled = false;
+    solveBtn.disabled = false;
+    return;
+  }
+
+  renderReviewCard(assistantTurn, data);
+  refreshRunsPanel();
+  loadSessionList();
+  reviewBtn.disabled = false;
+  planBtn.disabled = false;
+  sendBtn.disabled = false;
+  solveBtn.disabled = false;
+  inputEl.focus();
+}
+
+function renderReviewCard(parent, data) {
+  const verdict = (data.verdict || 'UNKNOWN').toUpperCase();
+  let cardClass = 'review-card';
+  if (verdict === 'APPROVE') cardClass += ' verdict-approve';
+  else if (verdict === 'REQUEST CHANGES') cardClass += ' verdict-request-changes';
+
+  const card = el('div', { class: cardClass });
+
+  const head = el('div', { class: 'head' });
+  head.appendChild(el('span', { text: 'code review', style: 'color: var(--yellow);' }));
+
+  let verdictCls = 'verdict unknown';
+  if (verdict === 'APPROVE') verdictCls = 'verdict approve';
+  else if (verdict === 'APPROVE WITH NITS') verdictCls = 'verdict nits';
+  else if (verdict === 'REQUEST CHANGES') verdictCls = 'verdict changes';
+  head.appendChild(el('span', { class: verdictCls, text: verdict }));
+  card.appendChild(head);
+
+  const metaLine = el('div', { class: 'head' });
+  metaLine.appendChild(el('span', {
+    class: 'meta',
+    text: (data.provider || '') + '/' + (data.model || '') +
+          '  ·  ' + (data.steps || 0) + ' step · ' +
+          (data.tokens || 0) + ' tok · ' +
+          (data.duration_ms || 0) + 'ms',
+  }));
+  card.appendChild(metaLine);
+
+  const body = el('div', { class: 'body' });
+  renderMarkdownInto(body, data.review_text || '(empty review)');
+  card.appendChild(body);
+
+  parent.appendChild(card);
+  scrollToBottom();
+}
+
+function renderPlanCard(parent, data) {
+  const card = el('div', { class: 'plan-card' });
+
+  const head = el('div', { class: 'head' });
+  head.appendChild(el('span', { text: 'architect plan' }));
+  head.appendChild(el('span', {
+    class: 'meta',
+    text: (data.provider || '') + '/' + (data.model || '') +
+          '  ·  ' + (data.steps || 0) + ' step · ' +
+          (data.tokens || 0) + ' tok · ' +
+          (data.duration_ms || 0) + 'ms',
+  }));
+  card.appendChild(head);
+
+  const body = el('div', { class: 'body' });
+  renderMarkdownInto(body, data.plan_text || '(empty plan)');
+  card.appendChild(body);
+
+  const actions = el('div', { class: 'actions' });
+  const accept = el('button', { class: 'accept', text: 'Accept & execute' });
+  accept.addEventListener('click', () => {
+    executePlan(data.plan_text || '');
+  });
+  const copy = el('button', { text: 'Copy' });
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(data.plan_text || '');
+      copy.textContent = 'Copied';
+      setTimeout(() => (copy.textContent = 'Copy'), 1500);
+    } catch (e) {
+      copy.textContent = 'Copy failed';
+    }
+  });
+  const replan = el('button', { text: 'Replan' });
+  replan.addEventListener('click', () => {
+    inputEl.value = 'Revise this plan:\n\n' + (data.plan_text || '');
+    inputEl.focus();
+    setTimeout(() => runPlan(), 50);
+  });
+  actions.appendChild(accept);
+  actions.appendChild(copy);
+  actions.appendChild(replan);
+  card.appendChild(actions);
+
+  parent.appendChild(card);
+  scrollToBottom();
+}
+
+// ---- Pending changes diff cards ----
+
+function renderDiffLines(diffText) {
+  const container = document.createDocumentFragment();
+  for (const raw of (diffText || '').split('\n')) {
+    const line = el('div', { class: 'diff-line' });
+    line.textContent = raw;
+    if (raw.startsWith('+++') || raw.startsWith('---')) {
+      line.classList.add('hunk');
+    } else if (raw.startsWith('@@')) {
+      line.classList.add('hunk');
+    } else if (raw.startsWith('+')) {
+      line.classList.add('add');
+    } else if (raw.startsWith('-')) {
+      line.classList.add('del');
+    } else {
+      line.classList.add('ctx');
+    }
+    container.appendChild(line);
+  }
+  return container;
+}
+
+function renderDiffCard(parent, change) {
+  const card = el('div', { class: 'diff-card' });
+  card.dataset.idx = change.idx;
+
+  // Header
+  const head = el('div', { class: 'diff-head' });
+  const left = document.createDocumentFragment();
+  left.appendChild(el('span', { class: 'kind', text: 'change #' + change.idx + ' · ' + (change.kind || 'edit') }));
+  left.appendChild(el('span', { class: 'path', text: change.path || '' }));
+  const leftWrap = el('div', {}, ...Array.from(left.childNodes));
+  const badge = el('span', {
+    class: 'state-badge ' + (change.state || 'pending'),
+    text: change.state || 'pending',
+  });
+  head.appendChild(leftWrap);
+  head.appendChild(badge);
+  card.appendChild(head);
+
+  // Diff body
+  const body = el('div', { class: 'diff-body' });
+  body.appendChild(renderDiffLines(change.diff));
+  card.appendChild(body);
+
+  // Actions (only for pending)
+  if (change.state === 'pending') {
+    const actions = el('div', { class: 'diff-actions' });
+    const approveBtn = el('button', { class: 'approve-btn', text: 'Approve' });
+    const rejectBtn = el('button', { class: 'reject-btn', text: 'Reject' });
+
+    approveBtn.addEventListener('click', async () => {
+      approveBtn.disabled = true;
+      rejectBtn.disabled = true;
+      approveBtn.textContent = 'Applying...';
+      try {
+        const resp = await fetch(`/api/sessions/${sessionId}/pending-changes/${change.idx}/approve`, { method: 'POST' });
+        if (resp.ok) {
+          badge.textContent = 'applied';
+          badge.className = 'state-badge applied';
+          card.classList.add('resolved', 'state-applied');
+        } else {
+          const err = await resp.json().catch(() => ({}));
+          approveBtn.textContent = 'Failed: ' + (err.detail || resp.status);
+        }
+      } catch (e) {
+        approveBtn.textContent = 'Error';
+      }
+    });
+    rejectBtn.addEventListener('click', async () => {
+      approveBtn.disabled = true;
+      rejectBtn.disabled = true;
+      rejectBtn.textContent = 'Rejecting...';
+      try {
+        const resp = await fetch(`/api/sessions/${sessionId}/pending-changes/${change.idx}/reject`, { method: 'POST' });
+        if (resp.ok) {
+          badge.textContent = 'rejected';
+          badge.className = 'state-badge rejected';
+          card.classList.add('resolved', 'state-rejected');
+        } else {
+          rejectBtn.textContent = 'Failed';
+        }
+      } catch (e) {
+        rejectBtn.textContent = 'Error';
+      }
+    });
+
+    actions.appendChild(approveBtn);
+    actions.appendChild(rejectBtn);
+    card.appendChild(actions);
+  } else {
+    card.classList.add('resolved', 'state-' + change.state);
+  }
+
+  parent.appendChild(card);
+}
+
+async function fetchAndRenderPendingChanges(parent) {
+  if (!sessionId) return;
+  try {
+    const resp = await fetch(`/api/sessions/${sessionId}/pending-changes`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    syncAutoApproveUI(data.auto_approve);
+    const pending = (data.changes || []).filter(c => c.state === 'pending');
+    if (pending.length === 0) return;
+    const wrap = el('div', { class: 'pending-changes-wrap' });
+    for (const change of pending) {
+      renderDiffCard(wrap, change);
+    }
+    parent.appendChild(wrap);
+    scrollToBottom();
+  } catch (e) {
+    console.warn('failed to fetch pending changes', e);
+  }
 }
 
 function parseSSE(raw) {
@@ -965,18 +2836,38 @@ function handleEvent(ev, ctx) {
     ctx.statsEl.innerHTML = '';
     ctx.statsEl.appendChild(el('span', { text: 'steps: ' + d.steps }));
     ctx.statsEl.appendChild(el('span', { text: 'tokens: ' + d.tokens }));
+    if (d.compacted > 0) {
+      ctx.statsEl.appendChild(el('span', { text: 'compacted ' + d.compacted + ' msgs' }));
+    }
+    if (typeof d.attempts === 'number' && d.attempts > 0) {
+      ctx.statsEl.appendChild(el('span', { text: 'attempts: ' + d.attempts }));
+    }
+    if (typeof d.solved === 'boolean') {
+      ctx.statsEl.appendChild(el('span', {
+        class: d.solved ? '' : 'warn',
+        text: d.solved ? 'solved ✓' : 'not solved ✗',
+      }));
+    }
     if (d.forced_final) {
       ctx.statsEl.appendChild(el('span', { class: 'warn', text: 'forced final (guardrail)' }));
     }
     if (d.hit_limit) {
       ctx.statsEl.appendChild(el('span', { class: 'warn', text: 'warning: hit iteration limit' }));
     }
+    // Render pending change diff cards if review mode is active.
+    if (d.pending_count > 0) {
+      fetchAndRenderPendingChanges(ctx.assistantTurn);
+    }
+    refreshRunsPanel();
+    loadSessionList();
     return;
   }
 
   if (ev.event === 'error') {
     ctx.typingEl.remove();
     showError(ev.data.error || 'unknown error', ctx.assistantTurn, ev.data.details);
+    refreshRunsPanel();
+    loadSessionList();
     return;
   }
 }
@@ -1004,12 +2895,142 @@ function showError(msg, parent, details) {
 inputEl.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
     e.preventDefault();
-    send();
+    if (e.shiftKey) {
+      runPlan();
+    } else {
+      send();
+    }
+  }
+  // Ctrl+Shift+S — solve
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    runSolve();
+  }
+  // Ctrl+Shift+R — review
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
+    e.preventDefault();
+    runReview();
   }
   if (e.key === 'Escape' && inflight) {
-    inflight.abort();
+    abortInflight();
   }
 });
+if (planBtn) {
+  planBtn.addEventListener('click', runPlan);
+}
+if (solveBtn) {
+  solveBtn.addEventListener('click', runSolve);
+}
+if (reviewBtn) {
+  reviewBtn.addEventListener('click', runReview);
+}
+
+// ---- global hotkeys: Ctrl+K opens the command palette ----
+document.addEventListener('keydown', (e) => {
+  const paletteOpen = paletteBackdropEl && paletteBackdropEl.classList.contains('open');
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (paletteOpen) {
+      closePalette();
+    } else {
+      openPalette();
+    }
+    return;
+  }
+  if (!paletteOpen) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closePalette();
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    const filtered = paletteBodyEl && paletteBodyEl._filtered;
+    if (filtered && filtered.length > 0) {
+      paletteFocus = (paletteFocus + 1) % filtered.length;
+      renderPalette(paletteInputEl.value);
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    const filtered = paletteBodyEl && paletteBodyEl._filtered;
+    if (filtered && filtered.length > 0) {
+      paletteFocus = (paletteFocus - 1 + filtered.length) % filtered.length;
+      renderPalette(paletteInputEl.value);
+    }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    executePaletteFocused();
+  }
+});
+if (paletteInputEl) {
+  paletteInputEl.addEventListener('input', () => {
+    paletteFocus = 0;
+    renderPalette(paletteInputEl.value);
+  });
+}
+if (paletteBackdropEl) {
+  paletteBackdropEl.addEventListener('click', (e) => {
+    if (e.target === paletteBackdropEl) closePalette();
+  });
+}
+
+// ---- sidebar ----
+if (sidebarSearchEl) {
+  sidebarSearchEl.addEventListener('input', () => {
+    sessionListFilter = sidebarSearchEl.value;
+    renderSessionList();
+  });
+}
+if (sidebarNewBtn) {
+  sidebarNewBtn.addEventListener('click', async () => {
+    if (inflight) await abortInflight();
+    await dropSession();
+    chatEl.innerHTML = '';
+    chatEl.appendChild(emptyEl);
+    loadSessionList();
+    inputEl.focus();
+  });
+}
+if (sidebarToggleBtn) {
+  sidebarToggleBtn.addEventListener('click', () => toggleSidebar());
+}
+if (localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true' && sidebarEl) {
+  sidebarEl.classList.add('collapsed');
+}
+
+// ---- fast mode tumbler ----
+if (fastModeEl) {
+  fastModeEl.checked = localStorage.getItem(FAST_MODE_STORAGE_KEY) === 'true';
+  if (fastModeEl.checked && fastModeLabelEl) fastModeLabelEl.classList.add('active');
+  fastModeEl.addEventListener('change', () => {
+    localStorage.setItem(FAST_MODE_STORAGE_KEY, fastModeEl.checked ? 'true' : 'false');
+    if (fastModeLabelEl) fastModeLabelEl.classList.toggle('active', fastModeEl.checked);
+    if (modelStatusEl) {
+      if (fastModeEl.checked) {
+        modelStatusEl.textContent = 'fast: local-fast (override)';
+      } else {
+        updateModelStatus();
+      }
+    }
+  });
+}
+// ---- auto-approve toggle ----
+if (autoApproveEl) {
+  autoApproveEl.addEventListener('change', async () => {
+    if (autoApproveLabelEl) autoApproveLabelEl.classList.toggle('active', !autoApproveEl.checked);
+    if (!sessionId) return;
+    try {
+      await fetch(`/api/sessions/${sessionId}/auto-approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: autoApproveEl.checked }),
+      });
+    } catch (e) { console.warn('auto-approve toggle failed', e); }
+  });
+}
+function syncAutoApproveUI(enabled) {
+  if (autoApproveEl) autoApproveEl.checked = enabled;
+  if (autoApproveLabelEl) autoApproveLabelEl.classList.toggle('active', !enabled);
+}
+
 inputEl.addEventListener('input', () => {
   inputEl.style.height = 'auto';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
@@ -1018,7 +3039,12 @@ sendBtn.addEventListener('click', send);
 debugStepsEl.checked = localStorage.getItem(DEBUG_STORAGE_KEY) === 'true';
 debugStepsEl.addEventListener('change', () => {
   localStorage.setItem(DEBUG_STORAGE_KEY, debugStepsEl.checked ? 'true' : 'false');
+  setRunsPanelVisible(debugStepsEl.checked);
 });
+if (runsRefreshBtn) {
+  runsRefreshBtn.addEventListener('click', () => refreshRunsPanel());
+}
+setRunsPanelVisible(debugStepsEl.checked);
 modelProfileEl.addEventListener('change', async () => {
   localStorage.setItem(PROFILE_STORAGE_KEY, modelProfileEl.value);
   currentProfileKey = modelProfileEl.value;
@@ -1030,7 +3056,7 @@ modelProfileEl.addEventListener('change', async () => {
   }
 });
 newSessionBtn.addEventListener('click', async () => {
-  if (inflight) inflight.abort();
+  if (inflight) await abortInflight();
   await dropSession();
   chatEl.innerHTML = '';
   chatEl.appendChild(emptyEl);
@@ -1045,7 +3071,15 @@ document.addEventListener('click', (e) => {
 });
 
 loadInfo();
-loadModels();
+(async () => {
+  await loadModels();
+  await loadSessionList();
+  await restoreSession();
+  refreshRunsPanel(true);
+})();
+// Refresh activity counter every 30s while idle so it stays honest
+// even if the user is reading, not typing.
+setInterval(() => refreshRunsPanel(true), 30000);
 inputEl.focus();
 </script>
 </body>
