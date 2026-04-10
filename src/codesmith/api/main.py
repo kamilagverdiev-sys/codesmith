@@ -49,6 +49,13 @@ from codesmith.model_selection import (
     list_model_profiles,
     resolve_model_profile,
 )
+from codesmith.pending_changes import (
+    apply_change,
+    is_auto_approve,
+    list_pending,
+    reject_change,
+    set_auto_approve,
+)
 from codesmith.personas import ARCHITECT, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
@@ -297,6 +304,36 @@ class ModelsResponse(BaseModel):
     default_model_profile: str
     profiles: list[ModelProfileResponse]
     installed_ollama_models: list[str]
+
+
+class PendingChangeEntry(BaseModel):
+    idx: int
+    kind: str
+    path: str
+    state: str
+    created_at: str
+    applied_at: str | None = None
+    summary: str = ""
+    diff: str = ""
+    before: str = ""
+    after: str = ""
+    files: list[dict[str, Any]] | None = None
+    error: str | None = None
+
+
+class PendingChangesResponse(BaseModel):
+    session_id: str
+    auto_approve: bool
+    changes: list[PendingChangeEntry]
+
+
+class AutoApproveRequest(BaseModel):
+    enabled: bool
+
+
+class AutoApproveResponse(BaseModel):
+    session_id: str
+    auto_approve: bool
 
 
 class PersonaResponse(BaseModel):
@@ -645,6 +682,127 @@ async def delete_session(session_id: str, request: Request) -> dict[str, bool]:
     if not ok:
         raise HTTPException(status_code=404, detail="session not found")
     return {"deleted": True}
+
+
+@app.get(
+    "/api/sessions/{session_id}/pending-changes",
+    response_model=PendingChangesResponse,
+)
+async def get_pending_changes(
+    session_id: str, request: Request
+) -> PendingChangesResponse:
+    """List every pending change parked on this session.
+
+    Includes applied / rejected / failed entries in addition to live
+    pending ones so the UI can render a full timeline, not just the
+    queue head.
+    """
+    state = _state(request)
+    session = state.get_session(session_id)
+    entries = [
+        PendingChangeEntry(
+            idx=int(item.get("idx", 0)),
+            kind=str(item.get("kind", "")),
+            path=str(item.get("path", "")),
+            state=str(item.get("state", "")),
+            created_at=str(item.get("created_at", "")),
+            applied_at=item.get("applied_at"),
+            summary=str(item.get("summary", "")),
+            diff=str(item.get("diff", "")),
+            before=str(item.get("before", "")),
+            after=str(item.get("after", "")),
+            files=item.get("files") if isinstance(item.get("files"), list) else None,
+            error=item.get("error") if isinstance(item.get("error"), str) else None,
+        )
+        for item in list_pending(session)
+    ]
+    return PendingChangesResponse(
+        session_id=session.session_id,
+        auto_approve=is_auto_approve(session),
+        changes=entries,
+    )
+
+
+@app.post(
+    "/api/sessions/{session_id}/pending-changes/{idx}/approve",
+    response_model=PendingChangeEntry,
+)
+async def approve_pending_change(
+    session_id: str, idx: int, request: Request
+) -> PendingChangeEntry:
+    state = _state(request)
+    session = state.get_session(session_id)
+    try:
+        updated = apply_change(session, idx, workspace_dir=session.workspace_dir)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"apply failed: {e}") from e
+    state.save_session(session)
+    return PendingChangeEntry(
+        idx=int(updated.get("idx", 0)),
+        kind=str(updated.get("kind", "")),
+        path=str(updated.get("path", "")),
+        state=str(updated.get("state", "")),
+        created_at=str(updated.get("created_at", "")),
+        applied_at=updated.get("applied_at"),
+        summary=str(updated.get("summary", "")),
+        diff=str(updated.get("diff", "")),
+        before=str(updated.get("before", "")),
+        after=str(updated.get("after", "")),
+        files=updated.get("files") if isinstance(updated.get("files"), list) else None,
+        error=updated.get("error") if isinstance(updated.get("error"), str) else None,
+    )
+
+
+@app.post(
+    "/api/sessions/{session_id}/pending-changes/{idx}/reject",
+    response_model=PendingChangeEntry,
+)
+async def reject_pending_change(
+    session_id: str, idx: int, request: Request
+) -> PendingChangeEntry:
+    state = _state(request)
+    session = state.get_session(session_id)
+    updated = reject_change(session, idx)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"pending change {idx} not found")
+    state.save_session(session)
+    return PendingChangeEntry(
+        idx=int(updated.get("idx", 0)),
+        kind=str(updated.get("kind", "")),
+        path=str(updated.get("path", "")),
+        state=str(updated.get("state", "")),
+        created_at=str(updated.get("created_at", "")),
+        applied_at=updated.get("applied_at"),
+        summary=str(updated.get("summary", "")),
+        diff=str(updated.get("diff", "")),
+        before=str(updated.get("before", "")),
+        after=str(updated.get("after", "")),
+        files=updated.get("files") if isinstance(updated.get("files"), list) else None,
+        error=updated.get("error") if isinstance(updated.get("error"), str) else None,
+    )
+
+
+@app.post(
+    "/api/sessions/{session_id}/auto-approve",
+    response_model=AutoApproveResponse,
+)
+async def set_session_auto_approve(
+    session_id: str,
+    payload: AutoApproveRequest,
+    request: Request,
+) -> AutoApproveResponse:
+    state = _state(request)
+    session = state.get_session(session_id)
+    set_auto_approve(session, payload.enabled)
+    state.save_session(session)
+    return AutoApproveResponse(
+        session_id=session.session_id,
+        auto_approve=is_auto_approve(session),
+    )
 
 
 @app.delete("/api/sessions/{session_id}/chat")

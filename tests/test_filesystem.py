@@ -7,7 +7,7 @@ broken and the agent can now read/write arbitrary host files.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -27,9 +27,14 @@ from codesmith.tools.filesystem import (
 
 @dataclass
 class _FakeSession:
-    """Minimal session stand-in — filesystem tools only need workspace_dir."""
+    """Minimal session stand-in for filesystem tool tests.
+
+    The tools look at workspace_dir and, since the pending-changes
+    rewire, also session.metadata for the auto_approve flag.
+    """
 
     workspace_dir: Path
+    metadata: dict = field(default_factory=dict)
 
 
 @pytest.fixture

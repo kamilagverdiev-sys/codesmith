@@ -528,6 +528,115 @@ def test_plan_endpoint_empty_task_validation_error(client: TestClient) -> None:
     assert r.status_code == 422
 
 
+# ============================================================
+# Pending changes + auto-approve (5b)
+# ============================================================
+
+
+def test_auto_approve_defaults_to_true_on_new_session(client: TestClient) -> None:
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.get(f"/api/sessions/{sid}/pending-changes")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["auto_approve"] is True
+    assert body["changes"] == []
+
+
+def test_set_auto_approve_flag(client: TestClient) -> None:
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(
+        f"/api/sessions/{sid}/auto-approve",
+        json={"enabled": False},
+    )
+    assert r.status_code == 200
+    assert r.json()["auto_approve"] is False
+    # Verify via list endpoint.
+    r = client.get(f"/api/sessions/{sid}/pending-changes")
+    assert r.json()["auto_approve"] is False
+    # Flip back.
+    r = client.post(
+        f"/api/sessions/{sid}/auto-approve",
+        json={"enabled": True},
+    )
+    assert r.json()["auto_approve"] is True
+
+
+def test_approve_pending_change_writes_file(
+    client: TestClient, state: AppState
+) -> None:
+    """End-to-end: queue a change on a session, hit the approve endpoint,
+    verify the target file now exists on disk."""
+    sid = client.post("/api/sessions").json()["session_id"]
+    # Flip session to review mode.
+    client.post(f"/api/sessions/{sid}/auto-approve", json={"enabled": False})
+    # Queue a change by calling queue_change directly on the live session.
+    from codesmith.pending_changes import queue_change
+
+    session = state.session_store.get(sid)
+    assert session is not None
+    change = queue_change(
+        session,
+        kind="write_file",
+        path="approved.py",
+        before="",
+        after="print('approved')\n",
+    )
+    state.save_session(session)
+    idx = change["idx"]
+
+    # Approve.
+    r = client.post(f"/api/sessions/{sid}/pending-changes/{idx}/approve")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "applied"
+    assert body["path"] == "approved.py"
+
+    # File exists on disk.
+    target = session.workspace_dir / "approved.py"
+    assert target.exists()
+    assert target.read_text(encoding="utf-8") == "print('approved')\n"
+
+    # Second approve is a conflict.
+    r = client.post(f"/api/sessions/{sid}/pending-changes/{idx}/approve")
+    assert r.status_code == 409
+
+
+def test_reject_pending_change_marks_state_and_does_not_write(
+    client: TestClient, state: AppState
+) -> None:
+    sid = client.post("/api/sessions").json()["session_id"]
+    client.post(f"/api/sessions/{sid}/auto-approve", json={"enabled": False})
+    from codesmith.pending_changes import queue_change
+
+    session = state.session_store.get(sid)
+    assert session is not None
+    change = queue_change(
+        session,
+        kind="write_file",
+        path="rejected.py",
+        before="",
+        after="print('nope')\n",
+    )
+    state.save_session(session)
+    idx = change["idx"]
+
+    r = client.post(f"/api/sessions/{sid}/pending-changes/{idx}/reject")
+    assert r.status_code == 200
+    assert r.json()["state"] == "rejected"
+    assert not (session.workspace_dir / "rejected.py").exists()
+
+
+def test_approve_unknown_idx_returns_404(client: TestClient) -> None:
+    sid = client.post("/api/sessions").json()["session_id"]
+    r = client.post(f"/api/sessions/{sid}/pending-changes/999/approve")
+    assert r.status_code == 404
+
+
+def test_pending_changes_unknown_session_returns_404(client: TestClient) -> None:
+    r = client.get("/api/sessions/no-such/pending-changes")
+    assert r.status_code == 404
+
+
 def test_in_memory_backend_config_path(tmp_path: Path) -> None:
     """Switching sessions.backend to 'memory' must give an InMemorySessionStore."""
     from unittest.mock import patch as _patch
