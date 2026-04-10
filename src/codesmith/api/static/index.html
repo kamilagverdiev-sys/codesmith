@@ -1003,9 +1003,90 @@
     margin-top: 6px;
     text-align: right;
   }
+
+  /* ---- Toast notifications ---- */
+  .toast-container {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--fg-dim);
+    max-width: 360px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    animation: toast-in 0.25s ease-out, toast-out 0.3s ease-in 3.7s forwards;
+    cursor: pointer;
+  }
+  .toast.warn { border-color: var(--yellow); color: var(--yellow); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes toast-out {
+    from { opacity: 1; }
+    to   { opacity: 0; transform: translateY(-8px); }
+  }
+
+  /* ---- Loading spinner on buttons ---- */
+  .btn-loading {
+    position: relative;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+  .btn-loading::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    margin-top: -6px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ---- Mobile breakpoint ---- */
+  @media (max-width: 768px) {
+    .sidebar {
+      position: fixed;
+      left: 0; top: 0; bottom: 0;
+      z-index: 100;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+    }
+    .sidebar:not(.collapsed) {
+      transform: translateX(0);
+    }
+    .sidebar.collapsed {
+      transform: translateX(-100%);
+    }
+    .main-wrap { width: 100% !important; }
+    .chat { padding: 16px 12px; }
+    footer.compose { padding: 10px 12px; }
+    .compose .row { gap: 6px; }
+  }
 </style>
 </head>
 <body>
+<div class="toast-container" id="toast-container"></div>
 
 <header>
   <div class="brand">
@@ -1182,6 +1263,14 @@ function scrollToBottom() {
 function shortArgs(keys) {
   if (!keys || keys.length === 0) return '()';
   return '(' + keys.join(', ') + ')';
+}
+
+function toast(msg, level = 'info') {
+  const container = document.getElementById('toast-container');
+  const t = el('div', { class: 'toast' + (level !== 'info' ? ' ' + level : ''), text: msg });
+  t.addEventListener('click', () => t.remove());
+  container.appendChild(t);
+  setTimeout(() => t.remove(), 4200);
 }
 
 // ---- safe markdown-light renderer ----
@@ -1926,6 +2015,7 @@ async function loadInfo() {
     statusDot.title = 'api unreachable';
     metaEl.innerHTML = '';
     metaEl.appendChild(el('span', { text: 'api unreachable' }));
+    toast('API unreachable — check that codesmith serve is running', 'warn');
   }
 }
 
@@ -1939,12 +2029,14 @@ async function send() {
   inputEl.value = '';
   inputEl.style.height = 'auto';
   sendBtn.disabled = true;
+  sendBtn.classList.add('btn-loading');
 
   try {
     await ensureSession();
   } catch (e) {
     showError('Failed to create session: ' + e.message);
     sendBtn.disabled = false;
+    sendBtn.classList.remove('btn-loading');
     return;
   }
 
@@ -2048,6 +2140,7 @@ async function send() {
     typingEl.remove();
     inflight = null;
     sendBtn.disabled = false;
+    sendBtn.classList.remove('btn-loading');
     inputEl.focus();
   }
 }
