@@ -94,14 +94,8 @@ def state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[AppState]
 
 
 @pytest.fixture
-def client(state: AppState, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def client(state: AppState) -> Iterator[TestClient]:
     """A TestClient that bypasses the lifespan loader and injects our state."""
-
-    # Mock Ollama discovery so tests don't hang when Ollama isn't running.
-    monkeypatch.setattr(
-        "codesmith.api.main.list_installed_ollama_models",
-        lambda _cfg: [],
-    )
 
     # The default lifespan calls load_config(); we don't want that.
     async def _no_op_lifespan(_app):  # noqa: ANN001
@@ -112,8 +106,21 @@ def client(state: AppState, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCli
 
     app.router.lifespan_context = asynccontextmanager(_no_op_lifespan)
 
+    # Pre-seed the Ollama tag cache so list_installed_ollama_models() returns
+    # instantly without any network call. Patching the function itself via
+    # monkeypatch / unittest.mock.patch doesn't reliably propagate into the
+    # anyio portal thread that TestClient uses on Python 3.14.
+    import time
+
+    from codesmith.model_selection import _OLLAMA_TAG_CACHE
+
+    cache_key = state.config.llm.api_base.rstrip("/")
+    _OLLAMA_TAG_CACHE[cache_key] = (time.monotonic() + 9999, [])
+
     with TestClient(app) as c:
         yield c
+
+    _OLLAMA_TAG_CACHE.pop(cache_key, None)
 
 
 # ============================================================
