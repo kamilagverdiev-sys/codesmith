@@ -273,7 +273,7 @@ class CreateSessionResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1, max_length=100_000)
     max_iterations: int | None = Field(default=None, ge=1, le=50)
     model_profile: str | None = None
 
@@ -377,7 +377,7 @@ class PersonasListResponse(BaseModel):
 
 
 class PlanRequest(BaseModel):
-    task: str = Field(..., min_length=1)
+    task: str = Field(..., min_length=1, max_length=100_000)
     model_profile: str | None = None
 
 
@@ -393,7 +393,7 @@ class PlanResponse(BaseModel):
 
 
 class ExecutePlanRequest(BaseModel):
-    plan_text: str | None = None
+    plan_text: str | None = Field(default=None, max_length=200_000)
     model_profile: str | None = None
     max_iterations: int | None = Field(default=None, ge=1, le=50)
 
@@ -416,7 +416,7 @@ class ReviewResponse(BaseModel):
 
 
 class SolveRequest(BaseModel):
-    task: str = Field(..., min_length=1)
+    task: str = Field(..., min_length=1, max_length=100_000)
     max_attempts: int = Field(default=3, ge=1, le=10)
     model_profile: str | None = None
 
