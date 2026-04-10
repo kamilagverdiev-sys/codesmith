@@ -159,8 +159,8 @@ class AppState:
     def save_session(self, session: Session) -> None:
         try:
             self.session_store.save(session)
-        except Exception as e:  # noqa: BLE001
-            log.warning("session persist failed for %s: %s", session.session_id, e)
+        except Exception:  # noqa: BLE001
+            log.exception("session persist failed for %s", session.session_id)
 
     async def drop_session(self, session_id: str) -> bool:
         async with self._lock:
@@ -179,6 +179,9 @@ class AppState:
         return session
 
     def register_inflight(self, session_id: str, task: asyncio.Task[Any]) -> None:
+        # Called from the asyncio event loop only, so dict mutation is safe
+        # relative to other coroutines. We still guard with the lock for
+        # consistency with drop_session which also touches _inflight.
         self._inflight[session_id] = task
 
     def clear_inflight(self, session_id: str, task: asyncio.Task[Any]) -> None:
@@ -396,7 +399,7 @@ class ExecutePlanRequest(BaseModel):
 
 
 class ReviewRequest(BaseModel):
-    diff: str = Field(..., min_length=1)
+    diff: str = Field(..., min_length=1, max_length=200_000)
     model_profile: str | None = None
 
 

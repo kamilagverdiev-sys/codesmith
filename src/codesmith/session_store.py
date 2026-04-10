@@ -420,11 +420,15 @@ class SQLiteSessionStore:
             created_at = datetime.now(UTC)
 
         messages: list[Any] = []
-        for m in message_rows:
+        for idx, m in enumerate(message_rows):
             try:
                 messages.append(json.loads(m["payload_json"]))
             except json.JSONDecodeError:
-                continue
+                log.warning(
+                    "corrupt message ordinal=%d in session %s, skipping",
+                    idx,
+                    session_id,
+                )
 
         session = Session(
             session_id=row["session_id"],
