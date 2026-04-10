@@ -26,6 +26,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -34,6 +35,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -57,7 +59,6 @@ from codesmith.pending_changes import (
     reject_change,
     set_auto_approve,
 )
-from codesmith.pending_changes import list_pending as list_pending_changes
 from codesmith.personas import ARCHITECT, CODER, REVIEWER, Persona, list_personas
 from codesmith.run_logger import RunLogger, build_run_record
 from codesmith.session import Session
@@ -114,6 +115,12 @@ class AppState:
 
         self._lock = asyncio.Lock()
         self.run_logger = RunLogger()
+        # Concurrency limiter: prevents too many agent runs from
+        # overwhelming the machine. config.limits.max_concurrent_sessions
+        # controls the cap.
+        self._agent_semaphore = asyncio.Semaphore(
+            config.limits.max_concurrent_sessions
+        )
         # session_id -> asyncio.Task currently running agent.run() for that
         # session. Populated on chat start, cleared on chat finish/error.
         # Abort endpoint calls .cancel() on the task.
@@ -192,17 +199,31 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Build the Config + AppState once. Reload via env CODESMITH_CONFIG."""
     cfg_path = os.environ.get("CODESMITH_CONFIG", "config.yaml")
     config = load_config(Path(cfg_path))
-    app.state.codesmith = AppState(config)
+    state = AppState(config)
+    app.state.codesmith = state
+
+    # ---- CORS middleware (reads config.api.cors_origins) ----
+    origins = config.api.cors_origins
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
     resolved = resolve_model_profile(
         config,
         default_model_profile_key(config),
         list_installed_ollama_models(config),
     )
     log.info(
-        "codesmith api ready - default_profile=%s primary=%s/%s sessions=in-memory",
+        "codesmith api ready - default_profile=%s primary=%s/%s sessions=%s",
         resolved.key,
         resolved.primary.provider,
         resolved.primary.model,
+        config.sessions.backend,
     )
     try:
         yield
@@ -680,6 +701,26 @@ async def execute_plan(
     )
 
 
+_VERDICT_RE = re.compile(
+    r"\b(APPROVE\s+WITH\s+NITS|REQUEST\s+CHANGES|APPROVE)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_verdict(text: str) -> str:
+    """Extract the review verdict from the LLM response text.
+
+    Scans the full text with a regex so it works even if the LLM indents
+    the verdict, wraps it in markdown bold, or adds emoji/punctuation.
+    """
+    m = _VERDICT_RE.search(text)
+    if m is None:
+        return "UNKNOWN"
+    raw = m.group(1).upper()
+    # Normalize whitespace (e.g. "APPROVE  WITH  NITS" → "APPROVE WITH NITS")
+    return " ".join(raw.split())
+
+
 @app.post("/api/sessions/{session_id}/review", response_model=ReviewResponse)
 async def review(
     session_id: str,
@@ -752,19 +793,7 @@ async def review(
             )
 
     review_text = (run.final_text or "").strip()
-    # Extract verdict from the review text.
-    verdict = "UNKNOWN"
-    for line in review_text.splitlines():
-        upper = line.strip().upper()
-        if upper.startswith("APPROVE WITH NITS"):
-            verdict = "APPROVE WITH NITS"
-            break
-        if upper.startswith("REQUEST CHANGES"):
-            verdict = "REQUEST CHANGES"
-            break
-        if upper.startswith("APPROVE"):
-            verdict = "APPROVE"
-            break
+    verdict = _extract_verdict(review_text)
 
     session.metadata["last_review"] = {
         "diff": payload.diff[:2000],
@@ -850,7 +879,7 @@ async def solve(
             result = await loop.solve(session, payload.task)
             pending_count = sum(
                 1
-                for c in list_pending_changes(session)
+                for c in list_pending(session)
                 if c.get("state") == "pending"
             )
             await queue.put(
@@ -1245,7 +1274,7 @@ def _build_sse_response(
         # Count pending changes so the UI knows when to render diff cards.
         pending_count = sum(
             1
-            for c in list_pending_changes(session)
+            for c in list_pending(session)
             if c.get("state") == "pending"
         )
         await queue.put(
@@ -1267,21 +1296,24 @@ def _build_sse_response(
         log_error: str | None = None
         run = None
         try:
-            await queue.put(
-                {
-                    "event": "start",
-                    "data": {
-                        "message": user_message,
-                        "model_profile": profile_key,
-                        "provider": provider,
-                        "model": model,
-                    },
-                }
-            )
-            run = await agent.run(session, on_step=on_step)
+            # Acquire the concurrency semaphore so we don't overload the
+            # machine with too many parallel agent runs.
+            async with state._agent_semaphore:
+                await queue.put(
+                    {
+                        "event": "start",
+                        "data": {
+                            "message": user_message,
+                            "model_profile": profile_key,
+                            "provider": provider,
+                            "model": model,
+                        },
+                    }
+                )
+                run = await agent.run(session, on_step=on_step)
             pending_count = sum(
                 1
-                for c in list_pending_changes(session)
+                for c in list_pending(session)
                 if c.get("state") == "pending"
             )
             await queue.put(

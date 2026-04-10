@@ -114,6 +114,7 @@ class InMemorySessionStore:
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
         self._sessions: dict[str, Session] = {}
+        self._updated_at: dict[str, datetime] = {}
         self._lock = threading.Lock()
 
     def create(
@@ -129,6 +130,7 @@ class InMemorySessionStore:
             if model_profile:
                 session.metadata["model_profile"] = model_profile
             self._sessions[session.session_id] = session
+            self._updated_at[session.session_id] = session.created_at
             return session
 
     def save(self, session: Session) -> None:
@@ -138,6 +140,7 @@ class InMemorySessionStore:
         # without first passing through create().
         with self._lock:
             self._sessions[session.session_id] = session
+            self._updated_at[session.session_id] = datetime.now()
 
     def get(self, session_id: str) -> Session | None:
         with self._lock:
@@ -146,14 +149,21 @@ class InMemorySessionStore:
     def list(self, limit: int = 20) -> list[SessionSummaryRow]:
         with self._lock:
             items = list(self._sessions.values())
-        items.sort(key=lambda s: s.created_at, reverse=True)
+            updated_map = dict(self._updated_at)
+        # Sort by updated_at (most recently touched first), matching the
+        # SQLite store behavior.
+        items.sort(
+            key=lambda s: updated_map.get(s.session_id, s.created_at),
+            reverse=True,
+        )
         rows: list[SessionSummaryRow] = []
         for s in items[:limit]:
+            updated = updated_map.get(s.session_id, s.created_at)
             rows.append(
                 SessionSummaryRow(
                     session_id=s.session_id,
                     created_at=s.created_at.isoformat(timespec="seconds"),
-                    updated_at=s.created_at.isoformat(timespec="seconds"),
+                    updated_at=updated.isoformat(timespec="seconds"),
                     model_profile=s.metadata.get("model_profile"),
                     workspace=str(s.workspace_dir),
                     title=_derive_title(s),
@@ -165,6 +175,7 @@ class InMemorySessionStore:
     def delete(self, session_id: str) -> bool:
         with self._lock:
             session = self._sessions.pop(session_id, None)
+            self._updated_at.pop(session_id, None)
         if session is None:
             return False
         try:
