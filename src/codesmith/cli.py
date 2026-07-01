@@ -37,6 +37,7 @@ from rich.rule import Rule
 from rich.table import Table
 
 from codesmith.agent import Agent
+from codesmith.comfy_cluster import create_app, parse_backend
 from codesmith.config import Config, LLMConfig, load_config
 from codesmith.llm import LLMRouter
 from codesmith.loops.self_repair import SelfRepairLoop
@@ -473,6 +474,42 @@ def web(
         reload=reload,
         log_level="info",
     )
+
+
+@app.command(name="comfy-proxy")
+def comfy_proxy(
+    backend: Annotated[
+        list[str],
+        typer.Option(
+            "--backend",
+            "-b",
+            help="ComfyUI backend as NAME=URL, e.g. pc1=http://192.168.1.10:8188. Repeat for each GPU PC.",
+        ),
+    ],
+    host: Annotated[str, typer.Option("--host", "-h")] = "0.0.0.0",
+    port: Annotated[int, typer.Option("--port", "-p")] = 8190,
+) -> None:
+    """Start a tiny ComfyUI prompt router for several GPU machines.
+
+    Run ComfyUI on each GPU PC with --listen, then point clients at this
+    proxy. Each new /prompt request is sent to the least busy backend.
+    """
+    if not backend:
+        raise typer.Exit("Add at least one --backend NAME=http://IP:8188")
+
+    parsed = [parse_backend(item) for item in backend]
+    console.print(Rule("[bold cyan]ComfyUI GPU router"))
+    for item in parsed:
+        console.print(f"[dim]{item.name}[/dim] -> [bold]{item.url}[/bold]")
+    console.print(f"\n[bold]proxy → http://{host}:{port}/[/bold]")
+    console.print("[dim]status → /cluster/backends[/dim]\n")
+
+    try:
+        import uvicorn
+    except ImportError as e:
+        raise typer.Exit("uvicorn is not installed. Run scripts/bootstrap.ps1 first.") from e
+
+    uvicorn.run(create_app(parsed), host=host, port=port, log_level="info")
 
 
 def _health_checks(
